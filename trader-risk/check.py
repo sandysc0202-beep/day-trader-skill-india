@@ -590,7 +590,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
             target = _f(o.get("take_profit_limit_price")) or _f(plan.get("target"))
             if leg_stop and plan_stop and abs(leg_stop - plan_stop) > CENT:
                 warns.append("the bracket stop %s differs from the plan's stop %s: the bracket's is the one "
-                             "the broker uses" % (_p(leg_stop), _p(plan_stop)))
+                             "ticket.py protect sends to Kite" % (_p(leg_stop), _p(plan_stop)))
             if stop and not leg_stop:
                 warns.append("the stop %s is in the plan only, not at the broker: set a stop alert "
                              "(trader-alerts: alerts.py add --from-plan)" % _p(stop))

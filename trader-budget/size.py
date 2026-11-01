@@ -463,7 +463,7 @@ def plan_report(s, order, notes=()):
     lines.append("")
     lines.append("Proposed bracket order (intraday, MIS; nothing has been placed):")
     how = "limit %s" % order["limit_price"] if order["type"] == "limit" else "market"
-    lines.append("  buy %s %s, %s, day, take-profit %s, stop-loss %s"
+    lines.append("  buy %s %s, %s, day, MIS, target %s (watched by trader-alerts), stop-loss %s (SL-M after the fill)"
                  % (order["qty"], order["symbol"], how, order["take_profit_limit_price"],
                     order["stop_loss_stop_price"]))
     if s["flat_by"]:

@@ -30,7 +30,9 @@ entry.json that has not triggered (unless you give --entry), a short (v2
 plans longs only).
 
 flat_by (default 15:15, or "flat_by" in trader/config.json): out by then, win
-or lose. On a 1:00 p.m. early close it moves up with the close (12:15).
+or lose. It must be before the 3:30 PM close. Brokers square off intraday (MIS)
+positions on their own a little before the close (Zerodha from about 3:20 PM),
+so the default leaves room.
 "min_reward_risk" in the config (default 1.0) only warns here; trader-risk
 enforces it.
 
@@ -488,7 +490,9 @@ def read_config(path):
 
 
 def resolve_flat_by(day, explicit, cfg, entry_time):
-    """(HH:MM, note). The config's flat-by moves up with a 1:00 p.m. early close."""
+    """(HH:MM, note). Flat-by must come before the 3:30 PM close (NSE has no half days).
+    Most brokers square off intraday (MIS) positions on their own from about 3:15 PM to 3:25 PM,
+    so the default, 15:15, gets out first."""
     t = parse_hhmm(explicit or cfg.get("flat_by") or DEFAULTS["flat_by"], "--flat-by" if explicit else "flat_by")
     note = ""
     s = session(day) if day else None
@@ -496,13 +500,11 @@ def resolve_flat_by(day, explicit, cfg, entry_time):
         close_dt = datetime.datetime.combine(day, s[1])
         at = datetime.datetime.combine(day, t)
         if at >= close_dt:
-            if explicit:
-                raise PlanError("--flat-by %s is at or after the %s close on %s" % (hm(t), ampm(s[1]), day))
-            moved = at - (datetime.datetime.combine(day, CLOSE) - close_dt)
-            if moved.time() <= OPEN:
-                raise PlanError("flat_by %s in the config is at or after the close" % hm(t))
-            t = moved.time()
-            note = "moved up for the 1:00 p.m. early close (%s)" % NSE_EARLY_CLOSE.get(day.isoformat(), "")
+            raise PlanError("%s %s is at or after the %s close on %s" % (
+                "--flat-by" if explicit else "flat_by in the config", hm(t), ampm(s[1]), day))
+        if t > datetime.time(15, 20):
+            note = ("your broker may square off intraday (MIS) positions on its own before %s; "
+                    "Zerodha starts at about 3:20 PM" % hm(t))
     if entry_time and entry_time >= t:
         raise PlanError("the entry at %s is at or after your flat-by %s: there is no time left to hold it"
                         % (ampm(entry_time), hm(t)))

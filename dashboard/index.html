@@ -1,0 +1,1000 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NSE Day Trader</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #04060c;
+  --bg2: #070b16;
+  --panel: rgba(12, 18, 34, 0.72);
+  --panel-hi: rgba(18, 28, 52, 0.85);
+  --line: rgba(0, 229, 255, 0.14);
+  --line-hi: rgba(0, 229, 255, 0.38);
+  --text: #d8e6ff;
+  --muted: #6f84a8;
+  --dim: #3b4a66;
+  --cyan: #00e5ff;
+  --magenta: #ff2bd6;
+  --violet: #8b5cff;
+  --up: #2bff9a;
+  --down: #ff3d71;
+  --amber: #ffb020;
+  --glow-c: 0 0 18px rgba(0, 229, 255, 0.35);
+  --glow-m: 0 0 18px rgba(255, 43, 214, 0.35);
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --r: 14px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: radial-gradient(1200px 700px at 15% -10%, rgba(139, 92, 255, 0.16), transparent 60%),
+              radial-gradient(1000px 600px at 110% 10%, rgba(0, 229, 255, 0.12), transparent 60%),
+              radial-gradient(900px 500px at 50% 120%, rgba(255, 43, 214, 0.10), transparent 60%),
+              var(--bg);
+  color: var(--text); font-family: var(--sans); font-size: 13px; overflow-x: hidden;
+}
+body::before { /* the grid floor */
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background-image: linear-gradient(rgba(0, 229, 255, 0.035) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(0, 229, 255, 0.035) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse at center, black 30%, transparent 85%);
+}
+body::after { /* scanline */
+  content: ""; position: fixed; left: 0; right: 0; height: 120px; top: -120px; pointer-events: none; z-index: 1;
+  background: linear-gradient(180deg, transparent, rgba(0, 229, 255, 0.04), transparent);
+  animation: scan 9s linear infinite;
+}
+@keyframes scan { to { top: 110%; } }
+@media (prefers-reduced-motion: reduce) { body::after { animation: none; display: none; } .pulse { animation: none !important; } }
+a { color: var(--cyan); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.up { color: var(--up); } .down { color: var(--down); } .muted { color: var(--muted); } .amber { color: var(--amber); }
+
+/* ---------------------------------------------------------------- layout */
+.app { position: relative; z-index: 2; display: grid; gap: 12px; padding: 12px 14px 70px; align-items: start;
+  grid-template-columns: 300px minmax(0, 1fr) 360px;
+  grid-template-areas: "top top top" "left main right"; }
+.top { grid-area: top; } .left { grid-area: left; } .main { grid-area: main; } .right { grid-area: right; }
+.duo { display: grid; grid-template-columns: 1.25fr 1fr; gap: 12px; }
+.left, .right, .main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+@media (max-width: 1280px) {
+  .app { grid-template-columns: 290px minmax(0, 1fr); grid-template-areas: "top top" "left main" "right right"; }
+  .right { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); align-items: start; }
+  .duo { grid-template-columns: 1fr; }
+}
+@media (max-width: 820px) {
+  .app { grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "main" "right" "left"; padding: 10px 16px 80px; }
+  .top { grid-template-columns: 1fr; }
+}
+
+/* ---------------------------------------------------------------- panels */
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
+  backdrop-filter: blur(14px) saturate(140%); -webkit-backdrop-filter: blur(14px) saturate(140%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 10px 40px rgba(0, 0, 0, 0.35); position: relative; overflow: hidden; }
+.panel::before { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(135deg, rgba(0, 229, 255, 0.10), transparent 30%, transparent 70%, rgba(255, 43, 214, 0.08)); opacity: .7; }
+.ph { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 11px 14px 9px;
+  border-bottom: 1px solid var(--line); position: relative; }
+.ph .row { flex-wrap: nowrap; }
+.ph h2 { margin: 0; font-size: 11px; letter-spacing: .22em; text-transform: uppercase; font-weight: 600; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+.ph h2 .idx { color: var(--cyan); font-family: var(--mono); font-size: 10px; }
+.pb { padding: 12px 14px; position: relative; }
+.corner { position: absolute; width: 10px; height: 10px; border-color: var(--cyan); opacity: .6; }
+.corner.tl { top: 6px; left: 6px; border-top: 1px solid; border-left: 1px solid; }
+.corner.br { bottom: 6px; right: 6px; border-bottom: 1px solid; border-right: 1px solid; }
+
+/* ---------------------------------------------------------------- controls */
+button, .btn { font-family: var(--sans); font-size: 12px; font-weight: 600; letter-spacing: .06em; cursor: pointer;
+  color: var(--text); background: rgba(0, 229, 255, 0.06); border: 1px solid var(--line-hi); border-radius: 9px;
+  padding: 7px 12px; transition: all .15s ease; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+button:hover:not(:disabled) { background: rgba(0, 229, 255, 0.16); box-shadow: var(--glow-c); border-color: var(--cyan); }
+button:disabled { opacity: .35; cursor: not-allowed; }
+button.primary { background: linear-gradient(135deg, rgba(0, 229, 255, .28), rgba(139, 92, 255, .28)); border-color: var(--cyan); }
+button.hot { background: linear-gradient(135deg, rgba(255, 43, 214, .32), rgba(139, 92, 255, .30)); border-color: var(--magenta); }
+button.hot:hover:not(:disabled) { box-shadow: var(--glow-m); border-color: var(--magenta); }
+button.danger { background: rgba(255, 61, 113, .14); border-color: rgba(255, 61, 113, .6); }
+button.ghost { background: transparent; border-color: transparent; color: var(--muted); padding: 5px 7px; }
+button.ghost:hover { color: var(--text); box-shadow: none; background: rgba(255,255,255,.04); }
+button.sm { padding: 4px 8px; font-size: 11px; border-radius: 7px; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+input, select { font-family: var(--mono); font-size: 12px; color: var(--text); background: rgba(4, 8, 18, .7);
+  border: 1px solid var(--line-hi); border-radius: 8px; padding: 7px 9px; min-width: 0; }
+input::placeholder { color: var(--dim); }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.spacer { flex: 1; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em;
+  padding: 4px 9px; border-radius: 999px; border: 1px solid var(--line-hi); background: rgba(0, 229, 255, .06); color: var(--text); text-transform: uppercase; }
+.chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); box-shadow: 0 0 8px currentColor; }
+.chip.ok .dot { background: var(--up); color: var(--up); }
+.chip.warn .dot { background: var(--amber); color: var(--amber); }
+.chip.bad .dot { background: var(--down); color: var(--down); }
+.chip.live { border-color: var(--down); background: rgba(255, 61, 113, .14); color: #ffd3de; }
+.chip.paper { border-color: var(--cyan); }
+.chip.demo { border-color: var(--violet); background: rgba(139, 92, 255, .16); }
+.tag { font-family: var(--mono); font-size: 9.5px; padding: 2px 6px; border-radius: 5px; background: rgba(139, 92, 255, .18); color: #cbb8ff; letter-spacing: .05em; text-transform: uppercase; }
+.pulse { animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .35; } }
+.empty { color: var(--muted); font-size: 12px; padding: 6px 0; line-height: 1.5; }
+.err { color: #ffc2d1; background: rgba(255, 61, 113, .10); border: 1px solid rgba(255, 61, 113, .35); border-radius: 9px; padding: 8px 10px; font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
+
+/* ---------------------------------------------------------------- top bar */
+.top { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 18px; align-items: center; padding: 12px 16px; }
+.brand { display: flex; align-items: center; gap: 12px; }
+.logo { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center;
+  background: conic-gradient(from 210deg, var(--cyan), var(--violet), var(--magenta), var(--cyan)); box-shadow: var(--glow-c); }
+.logo svg { width: 22px; height: 22px; }
+.brand h1 { margin: 0; font-size: 15px; letter-spacing: .3em; font-weight: 700; }
+.brand h1 b { color: var(--cyan); text-shadow: var(--glow-c); }
+.brand .sub { color: var(--muted); font-size: 10.5px; letter-spacing: .18em; margin-top: 2px; font-family: var(--mono); }
+.session { min-width: 0; }
+.session .clockrow { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+.bigclock { font-family: var(--mono); font-size: 26px; font-weight: 700; letter-spacing: .04em; text-shadow: var(--glow-c); }
+.bigclock small { font-size: 12px; color: var(--muted); font-weight: 400; margin-left: 6px; }
+.phase { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; }
+.track { position: relative; height: 26px; margin-top: 14px; }
+.track .rail { position: absolute; left: 0; right: 0; top: 9px; height: 6px; border-radius: 6px; background: rgba(255, 255, 255, .06); overflow: hidden; }
+.track .fill { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, var(--violet), var(--cyan)); box-shadow: var(--glow-c); border-radius: 6px; transition: width .6s ease; }
+.track .zone { position: absolute; top: 0; bottom: 0; }
+.track .mk { position: absolute; top: 4px; width: 1px; height: 16px; background: rgba(255, 255, 255, .25); }
+.track .mk.hi span { top: -11px; }
+.track .mk span { position: absolute; top: 15px; transform: translateX(-50%); font-family: var(--mono); font-size: 9px; color: var(--muted); white-space: nowrap; }
+.track .now { position: absolute; top: 2px; width: 3px; height: 20px; border-radius: 2px; background: #fff; box-shadow: 0 0 14px var(--cyan), 0 0 4px #fff; transform: translateX(-1px); transition: left .6s ease; }
+.statusbox { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.pnlbox { text-align: right; padding-left: 14px; border-left: 1px solid var(--line); }
+.pnlbox .lbl { font-size: 10px; letter-spacing: .2em; color: var(--muted); }
+.pnlbox .val { font-family: var(--mono); font-size: 20px; font-weight: 700; }
+
+/* ---------------------------------------------------------------- lists */
+.list { display: flex; flex-direction: column; }
+.li { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 8px 6px; border-radius: 9px; cursor: pointer; border: 1px solid transparent; align-items: center; }
+.li:hover { background: rgba(0, 229, 255, .06); border-color: var(--line); }
+.li.active { background: linear-gradient(90deg, rgba(0, 229, 255, .14), transparent); border-color: var(--line-hi); }
+.li .sym { font-weight: 700; letter-spacing: .05em; display: flex; align-items: center; gap: 6px; }
+.li .px { font-family: var(--mono); text-align: right; }
+.li .meta { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 11px; font-family: var(--mono); }
+.li canvas { width: 70px; height: 22px; }
+.favgrid .li { grid-template-columns: 1fr 74px auto; }
+.scrolly { max-height: 360px; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--dim) transparent; }
+
+/* ---------------------------------------------------------------- chart */
+.chartwrap { position: relative; height: 470px; }
+.chartwrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.symhead { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+.symhead .s { font-size: 24px; font-weight: 700; letter-spacing: .08em; }
+.symhead .p { font-family: var(--mono); font-size: 24px; font-weight: 700; }
+.symhead .c { font-family: var(--mono); font-size: 13px; }
+.legend { display: flex; gap: 12px; flex-wrap: wrap; font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+.legend i { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 5px; }
+.tip { position: absolute; pointer-events: none; font-family: var(--mono); font-size: 11px; background: rgba(5, 9, 20, .92);
+  border: 1px solid var(--line-hi); border-radius: 9px; padding: 7px 9px; display: none; z-index: 5; white-space: nowrap; box-shadow: var(--glow-c); }
+
+/* ---------------------------------------------------------------- pipeline */
+.pipe { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 0; padding: 14px 10px 12px; position: relative; }
+.node { display: flex; flex-direction: column; align-items: center; gap: 7px; position: relative; text-align: center; }
+.node::after { content: ""; position: absolute; top: 15px; left: calc(50% + 17px); right: calc(-50% + 17px); height: 2px; background: rgba(255, 255, 255, .08); }
+.node:last-child::after { display: none; }
+.node.done::after { background: linear-gradient(90deg, var(--cyan), var(--violet)); box-shadow: var(--glow-c); }
+.node .orb { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-family: var(--mono); font-size: 11px; font-weight: 700;
+  border: 1px solid var(--dim); background: rgba(255, 255, 255, .03); color: var(--muted); transition: all .25s; }
+.node.done .orb { border-color: var(--cyan); color: #001018; background: var(--cyan); box-shadow: var(--glow-c); }
+.node.warn .orb { border-color: var(--amber); color: var(--amber); box-shadow: 0 0 14px rgba(255, 176, 32, .4); }
+.node.bad .orb { border-color: var(--down); color: var(--down); box-shadow: 0 0 14px rgba(255, 61, 113, .45); }
+.node.now .orb { border-color: var(--magenta); color: var(--magenta); box-shadow: var(--glow-m); animation: pulse 1.6s infinite; }
+.node .nm { font-size: 9.5px; letter-spacing: .16em; color: var(--muted); text-transform: uppercase; }
+.node .st { font-family: var(--mono); font-size: 10px; color: var(--text); min-height: 13px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 3px; }
+@media (max-width: 820px) { .demobar .muted, .demobar .chip { display: none; } .demobar { gap: 6px; padding: 8px 10px; } }
+@media (max-width: 820px) { .pipe { grid-template-columns: repeat(3, 1fr); row-gap: 14px; } .node::after { display: none; } }
+
+/* ---------------------------------------------------------------- cards */
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: 12px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; font-family: var(--mono); text-align: right; }
+.stat3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.stat { background: rgba(255, 255, 255, .025); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.stat .l { font-size: 9.5px; letter-spacing: .16em; color: var(--muted); text-transform: uppercase; }
+.stat .v { font-family: var(--mono); font-size: 17px; font-weight: 700; margin-top: 3px; }
+.verdict { font-size: 12.5px; line-height: 1.5; padding: 9px 11px; border-radius: 10px; background: rgba(139, 92, 255, .10); border: 1px solid rgba(139, 92, 255, .35); }
+.gauge { display: grid; grid-template-columns: 128px 1fr; gap: 12px; align-items: center; }
+.gauge svg { width: 128px; height: 128px; }
+.stamp { font-family: var(--mono); font-weight: 700; letter-spacing: .3em; font-size: 22px; padding: 6px 14px; border-radius: 10px; border: 2px solid; display: inline-block; transform: rotate(-3deg); }
+.stamp.pass { color: var(--up); border-color: var(--up); box-shadow: 0 0 22px rgba(43, 255, 154, .35), inset 0 0 18px rgba(43, 255, 154, .15); }
+.stamp.block { color: var(--down); border-color: var(--down); box-shadow: 0 0 22px rgba(255, 61, 113, .35), inset 0 0 18px rgba(255, 61, 113, .15); }
+.reasons { margin: 8px 0 0; padding-left: 16px; font-size: 12px; line-height: 1.5; }
+.ticket { font-family: var(--mono); font-size: 11.5px; line-height: 1.55; background: rgba(4, 8, 18, .6); border: 1px dashed var(--line-hi); border-radius: 10px; padding: 9px 11px; white-space: pre-wrap; word-break: break-word; }
+.bar { height: 7px; border-radius: 7px; background: rgba(255, 255, 255, .06); overflow: hidden; }
+.bar > i { display: block; height: 100%; border-radius: 7px; background: linear-gradient(90deg, var(--cyan), var(--violet)); }
+.bar.hot > i { background: linear-gradient(90deg, var(--amber), var(--down)); }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th { text-align: left; font-weight: 500; font-size: 10px; letter-spacing: .14em; color: var(--muted); text-transform: uppercase; padding: 6px 6px; border-bottom: 1px solid var(--line); }
+td { padding: 7px 6px; border-bottom: 1px solid rgba(255, 255, 255, .04); font-family: var(--mono); }
+td:first-child { font-family: var(--sans); font-weight: 700; }
+.news .it { padding: 8px 2px; border-bottom: 1px solid rgba(255, 255, 255, .05); display: grid; grid-template-columns: 54px 1fr; gap: 8px; }
+.news .t { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+.news .h { font-size: 12.5px; line-height: 1.4; }
+.news .imp { color: var(--magenta); font-weight: 700; margin-right: 4px; }
+
+/* ---------------------------------------------------------------- demo bar, toasts, modal */
+.demobar { position: fixed; left: 50%; transform: translateX(-50%); bottom: 12px; z-index: 30; display: flex; gap: 10px; align-items: center;
+  padding: 9px 14px; border-radius: 14px; background: rgba(10, 14, 30, .9); border: 1px solid rgba(139, 92, 255, .5); box-shadow: 0 0 30px rgba(139, 92, 255, .25);
+  backdrop-filter: blur(12px); width: min(760px, calc(100% - 32px)); }
+.demobar input[type=range] { flex: 1; accent-color: var(--violet); padding: 0; border: 0; background: transparent; }
+.toasts { position: fixed; top: 14px; right: 14px; z-index: 50; display: flex; flex-direction: column; gap: 8px; width: min(380px, calc(100% - 28px)); }
+.toast { background: rgba(10, 14, 30, .95); border: 1px solid var(--line-hi); border-left: 3px solid var(--cyan); border-radius: 10px; padding: 10px 12px; font-size: 12.5px; line-height: 1.45;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .5); animation: slidein .25s ease; white-space: pre-wrap; }
+.toast.bad { border-left-color: var(--down); } .toast.good { border-left-color: var(--up); } .toast.warn { border-left-color: var(--amber); }
+@keyframes slidein { from { transform: translateX(30px); opacity: 0; } }
+.modal { position: fixed; inset: 0; background: rgba(2, 4, 10, .7); backdrop-filter: blur(6px); z-index: 40; display: none; place-items: center; padding: 16px; }
+.modal.open { display: grid; }
+.modal .panel { width: min(560px, 100%); max-height: calc(100vh - 40px); overflow: auto; }
+.field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
+.field label { font-size: 10.5px; letter-spacing: .14em; color: var(--muted); text-transform: uppercase; }
+.note { font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+.spin { width: 12px; height: 12px; border: 2px solid rgba(255, 255, 255, .2); border-top-color: var(--cyan); border-radius: 50%; animation: rot .7s linear infinite; display: inline-block; }
+@keyframes rot { to { transform: rotate(360deg); } }
+footer { position: relative; z-index: 2; text-align: center; color: var(--dim); font-size: 11px; padding: 0 16px 80px; font-family: var(--mono); }
+</style>
+</head>
+<body>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<div class="app">
+  <!-- ================================================================ top -->
+  <header class="top panel">
+    <div class="brand">
+      <div class="logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="#001018" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5-6 4 4 8-9"/><path d="M15 6h5v5"/></svg></div>
+      <div><h1>NSE<b>//</b>DAYTRADER</h1><div class="sub">INDIA EDITION · FYERS</div></div>
+    </div>
+    <div class="session">
+      <div class="clockrow">
+        <div class="bigclock" id="clock">--:--:--<small>IST</small></div>
+        <div class="phase" id="phase">connecting…</div>
+        <div class="muted mono" id="dateline" style="font-size:11px"></div>
+      </div>
+      <div class="track" id="track" aria-label="NSE session timeline"></div>
+    </div>
+    <div class="statusbox">
+      <span class="chip" id="chipMode"><span class="dot"></span>MODE</span>
+      <span class="chip" id="chipData"><span class="dot"></span>DATA</span>
+      <button class="sm" id="btnFyers" title="FYERS connection">FYERS</button>
+      <div class="pnlbox"><div class="lbl">DAY P&amp;L</div><div class="val mono" id="dayPnl">₹0</div></div>
+    </div>
+  </header>
+
+  <!-- ================================================================ left -->
+  <aside class="left">
+    <section class="panel">
+      <div class="ph"><h2><span class="idx">01</span>Scanner</h2>
+        <div class="row">
+          <select id="scanScope" title="what to scan" aria-label="Scan scope" style="padding:5px 6px">
+            <option value="market">Market</option>
+            <option value="favorites">Favourites</option>
+          </select>
+          <button class="primary sm" id="btnScan">SCAN</button>
+        </div>
+      </div>
+      <div class="pb">
+        <div class="note" id="scanInfo">Opening-range breakouts: closes above the first 15 minutes' high. A scan lists charts, not stocks to buy.</div>
+        <div class="list scrolly" id="hits" style="margin-top:8px"></div>
+      </div>
+    </section>
+    <section class="panel">
+      <div class="ph"><h2><span class="idx">02</span>Favourites</h2></div>
+      <div class="pb">
+        <form class="row" id="favForm" style="margin-bottom:8px">
+          <input id="favInput" placeholder="ADD SYMBOL e.g. RELIANCE" aria-label="Add symbol" style="flex:1">
+          <button class="sm" type="submit">ADD</button>
+        </form>
+        <div class="list favgrid scrolly" id="favs"></div>
+      </div>
+    </section>
+    <section class="panel">
+      <div class="ph"><h2><span class="idx">07</span>News &amp; NSE filings</h2><button class="sm ghost" id="btnNews" aria-label="Refresh news">↻</button></div>
+      <div class="pb news scrolly" id="newsBox" style="max-height:420px"><div class="empty">Loading…</div></div>
+    </section>
+  </aside>
+
+  <!-- ================================================================ main -->
+  <main class="main">
+    <section class="panel">
+      <div class="ph">
+        <div class="symhead">
+          <span class="s" id="symName">—</span>
+          <span class="p" id="symPx">—</span>
+          <span class="c" id="symChg"></span>
+          <span class="tag" id="symSrc"></span>
+        </div>
+        <div class="row">
+          <button class="sm" id="btnResults" title="Quarterly results (trader-analyst)">RESULTS</button>
+          <button class="hot sm" id="btnAnalyze" title="Entry, plan, time machine, size and risk check for this symbol. Places nothing.">ANALYZE ▸</button>
+        </div>
+      </div>
+      <div class="pb" style="padding-top:8px">
+        <div class="legend" id="legend"></div>
+        <div class="chartwrap" id="chartwrap"><canvas id="chart"></canvas><div class="tip" id="tip"></div></div>
+      </div>
+      <div class="pipe" id="pipe"></div>
+    </section>
+    <div class="duo">
+      <section class="panel">
+        <div class="ph"><h2><span class="idx">06</span>Positions &amp; Limits</h2><span class="muted mono" id="cashLine"></span></div>
+        <div class="pb" id="posBox"><div class="empty">No open positions.</div></div>
+      </section>
+      <section class="panel">
+        <div class="ph"><h2><span class="idx">08</span>Journal</h2></div>
+        <div class="pb" id="journalBox"><div class="empty">Closed trades show here.</div></div>
+      </section>
+    </div>
+  </main>
+
+  <!-- ================================================================ right -->
+  <aside class="right">
+    <section class="panel">
+      <div class="ph"><h2><span class="idx">03</span>Entry &amp; Plan</h2>
+        <div class="row"><button class="sm" id="btnEntry">CHECK</button><button class="sm" id="btnPlan">PLAN</button></div></div>
+      <div class="pb" id="planBox"><div class="empty">Pick a symbol, then CHECK: the entry timer watches for a 5-minute close above the opening range.</div></div>
+    </section>
+    <section class="panel">
+      <div class="ph"><h2><span class="idx">04</span>Time Machine</h2><button class="sm" id="btnTM">REPLAY</button></div>
+      <div class="pb" id="tmBox"><div class="empty">10,000 replays of the rest of the session from the stock's own bars, plus every past day the setup fired.</div></div>
+    </section>
+    <section class="panel">
+      <div class="ph"><h2><span class="idx">05</span>Size · Risk · Order</h2>
+        <div class="row"><button class="sm" id="btnSize">SIZE</button><button class="sm" id="btnRisk">RISK</button></div></div>
+      <div class="pb" id="orderBox"><div class="empty">Size the trade to your max loss, then the risk check: only a PASS can become an order.</div></div>
+    </section>
+  </aside>
+
+</div>
+
+<footer>Education and tooling, not financial advice. Every number comes from the pack's own tools; orders need a risk PASS, your typed yes and a second confirm.</footer>
+
+<div class="demobar" id="demobar" style="display:none">
+  <span class="chip demo"><span class="dot" style="background:var(--violet)"></span>REPLAY</span>
+  <button class="sm" id="btnPlay" aria-label="Play or pause the replay">▶</button>
+  <select id="speed" aria-label="Replay speed"><option value="5">5×</option><option value="10" selected>10×</option><option value="30">30×</option><option value="60">60×</option><option value="180">180×</option></select>
+  <input type="range" id="scrub" min="555" max="645" step="1" aria-label="Replay time">
+  <span class="mono" id="scrubLbl" style="min-width:42px">09:50</span>
+  <button class="sm ghost" id="btnReset" title="Clear the demo's trades and start again">RESET</button>
+  <span class="muted" style="font-size:10.5px">saved data: 9:15–10:45</span>
+</div>
+
+<!-- ================================================================ modals -->
+<div class="modal" id="modal" role="dialog" aria-modal="true"><div class="panel"><div class="corner tl"></div><div class="corner br"></div>
+  <div class="ph"><h2 id="mTitle">—</h2><button class="ghost" id="mClose" aria-label="Close">✕</button></div>
+  <div class="pb" id="mBody"></div></div></div>
+
+<script>
+"use strict";
+/* ====================================================================== helpers */
+const $ = (id) => document.getElementById(id);
+const S = { status: null, quotes: {}, symbol: null, chart: null, state: {}, book: null, hits: [], busy: {}, fired: new Set(), lastChartAt: 0 };
+const fmt = (v, d = 2) => v == null || isNaN(v) ? "—" : Number(v).toLocaleString("en-IN", { minimumFractionDigits: d, maximumFractionDigits: d });
+const inr = (v, d = 2) => v == null ? "—" : (v < 0 ? "−₹" : "₹") + fmt(Math.abs(v), d);
+const pct = (v) => v == null ? "" : (v >= 0 ? "+" : "") + Number(v).toFixed(2) + "%";
+const cls = (v) => v > 0 ? "up" : v < 0 ? "down" : "muted";
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const hm = (ts) => { const d = new Date((ts + 19800) * 1000); return String(d.getUTCHours()).padStart(2, "0") + ":" + String(d.getUTCMinutes()).padStart(2, "0"); };
+
+async function api(path, body) {
+  const opt = body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
+  const r = await fetch(path, opt);
+  let data = null;
+  try { data = await r.json(); } catch (e) { data = { error: "bad answer from the server" }; }
+  if (!r.ok || (data && data.error)) throw new Error((data && data.error) || ("HTTP " + r.status));
+  return data;
+}
+function toast(msg, kind = "", ms = 6000) {
+  const el = document.createElement("div");
+  el.className = "toast " + kind; el.textContent = msg; $("toasts").appendChild(el);
+  setTimeout(() => el.remove(), ms);
+}
+async function busy(key, btn, fn) {
+  if (S.busy[key]) return;
+  S.busy[key] = true;
+  const old = btn ? btn.innerHTML : null;
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span>'; }
+  try { return await fn(); }
+  catch (e) { toast(e.message, "bad", 9000); }
+  finally { S.busy[key] = false; if (btn) { btn.disabled = false; btn.innerHTML = old; } }
+}
+function spark(canvas, values, color) {
+  if (!canvas || !values || values.length < 2) return;
+  const dpr = window.devicePixelRatio || 1, w = canvas.clientWidth || 70, h = canvas.clientHeight || 22;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  const g = canvas.getContext("2d"); g.scale(dpr, dpr);
+  const lo = Math.min(...values), hi = Math.max(...values), span = hi - lo || 1;
+  const grad = g.createLinearGradient(0, 0, 0, h); grad.addColorStop(0, color + "55"); grad.addColorStop(1, color + "00");
+  g.beginPath();
+  values.forEach((v, i) => { const x = i / (values.length - 1) * w, y = h - 2 - (v - lo) / span * (h - 4); i ? g.lineTo(x, y) : g.moveTo(x, y); });
+  g.strokeStyle = color; g.lineWidth = 1.4; g.shadowColor = color; g.shadowBlur = 6; g.stroke();
+  g.lineTo(w, h); g.lineTo(0, h); g.closePath(); g.fillStyle = grad; g.shadowBlur = 0; g.fill();
+}
+
+/* ====================================================================== the chart (canvas, no library) */
+const Chart = {
+  cv: null, g: null, w: 0, h: 0, data: null, opts: {}, hover: null,
+  init() {
+    this.cv = $("chart"); this.g = this.cv.getContext("2d");
+    new ResizeObserver(() => this.draw()).observe($("chartwrap"));
+    this.cv.addEventListener("mousemove", (e) => { const r = this.cv.getBoundingClientRect(); this.hover = { x: e.clientX - r.left, y: e.clientY - r.top }; this.draw(); });
+    this.cv.addEventListener("mouseleave", () => { this.hover = null; $("tip").style.display = "none"; this.draw(); });
+  },
+  set(data, opts) { this.data = data; this.opts = opts || {}; this.draw(); },
+  draw() {
+    const cv = this.cv, wrap = $("chartwrap"), dpr = window.devicePixelRatio || 1;
+    const W = wrap.clientWidth, H = wrap.clientHeight;
+    if (!W || !H) return;
+    cv.width = W * dpr; cv.height = H * dpr; const g = this.g; g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, W, H);
+    const d = this.data;
+    if (!d || !d.bars || !d.bars.length) {
+      g.fillStyle = "#6f84a8"; g.font = "12px " + getComputedStyle(document.body).fontFamily; g.textAlign = "center";
+      g.fillText(d && d.message ? d.message : "Pick a symbol: scanner hits and favourites are on the left.", W / 2, H / 2); return;
+    }
+    const PADL = 8, PADR = 66, PADT = 10, PADB = 22, VOLH = Math.round((H - PADT - PADB) * 0.16);
+    const plotH = H - PADT - PADB - VOLH - 6, plotW = W - PADL - PADR;
+    const bars = d.bars, t0 = this.opts.sessionStart || bars[0].t, t1 = Math.max(this.opts.sessionEnd || 0, bars[bars.length - 1].t + 300);
+    const X = (t) => PADL + (t - t0) / (t1 - t0) * plotW;
+    const bw = Math.max(2, plotW / ((t1 - t0) / 300) * 0.62);
+    let lo = Infinity, hi = -Infinity;
+    for (const b of bars) { lo = Math.min(lo, b.l); hi = Math.max(hi, b.h); }
+    const lines = this.opts.lines || [];
+    for (const l of lines) if (l.price) { lo = Math.min(lo, l.price); hi = Math.max(hi, l.price); }
+    const bands = this.opts.bands;
+    if (bands) for (const r of bands.rows) { lo = Math.min(lo, r[0]); hi = Math.max(hi, r[4]); }
+    const pad = (hi - lo) * 0.08 || 1; lo -= pad; hi += pad;
+    const Y = (p) => PADT + (hi - p) / (hi - lo) * plotH;
+
+    // grid + price axis
+    g.font = "10.5px JetBrains Mono, monospace"; g.textAlign = "left"; g.textBaseline = "middle";
+    const step = niceStep((hi - lo) / 6);
+    for (let p = Math.ceil(lo / step) * step; p <= hi; p += step) {
+      const y = Y(p); g.strokeStyle = "rgba(0,229,255,0.06)"; g.lineWidth = 1; g.beginPath(); g.moveTo(PADL, y); g.lineTo(PADL + plotW, y); g.stroke();
+      g.fillStyle = "#4f6488"; g.fillText(fmt(p, p < 100 ? 2 : 1), PADL + plotW + 8, y);
+    }
+    // time axis: every hour
+    g.textAlign = "center"; g.textBaseline = "top";
+    for (let t = t0; t <= t1; t += 300) {
+      const lbl = hm(t);
+      if (lbl.endsWith(":15") && (lbl.startsWith("09") || true) && ((t - t0) % 3600 === 0)) {
+        const x = X(t); g.strokeStyle = "rgba(0,229,255,0.05)"; g.beginPath(); g.moveTo(x, PADT); g.lineTo(x, H - PADB); g.stroke();
+        g.fillStyle = "#4f6488"; g.fillText(lbl, x, H - PADB + 6);
+      }
+    }
+    // opening range box
+    const orr = this.opts.or;
+    if (orr) {
+      const x0 = X(t0), x1 = X(t0 + orr.minutes * 60);
+      const grd = g.createLinearGradient(x0, 0, x1, 0); grd.addColorStop(0, "rgba(139,92,255,0.20)"); grd.addColorStop(1, "rgba(139,92,255,0.04)");
+      g.fillStyle = grd; g.fillRect(x0, Y(orr.high), x1 - x0, Y(orr.low) - Y(orr.high));
+      g.setLineDash([3, 4]); g.strokeStyle = "rgba(139,92,255,0.7)";
+      for (const p of [orr.high, orr.low]) { g.beginPath(); g.moveTo(x0, Y(p)); g.lineTo(PADL + plotW, Y(p)); g.stroke(); }
+      g.setLineDash([]);
+    }
+    // time-machine cone
+    if (bands && bands.rows.length) {
+      const pts = bands.rows.map((r, i) => [X(bands.t0 + i * 300), r]);
+      const cone = (a, b, color) => { g.beginPath(); pts.forEach(([x, r], i) => i ? g.lineTo(x, Y(r[a])) : g.moveTo(x, Y(r[a]))); for (let i = pts.length - 1; i >= 0; i--) g.lineTo(pts[i][0], Y(pts[i][1][b])); g.closePath(); g.fillStyle = color; g.fill(); };
+      cone(0, 4, "rgba(255,43,214,0.08)"); cone(1, 3, "rgba(255,43,214,0.16)");
+      g.beginPath(); pts.forEach(([x, r], i) => i ? g.lineTo(x, Y(r[2])) : g.moveTo(x, Y(r[2])));
+      g.setLineDash([2, 4]); g.strokeStyle = "rgba(255,43,214,0.85)"; g.lineWidth = 1.3; g.stroke(); g.setLineDash([]);
+    }
+    // volume
+    let vmax = 0; for (const b of bars) vmax = Math.max(vmax, b.v || 0);
+    const vy = H - PADB;
+    for (const b of bars) {
+      const x = X(b.t + 150), vh = vmax ? (b.v / vmax) * VOLH : 0;
+      g.fillStyle = b.c >= b.o ? "rgba(43,255,154,0.22)" : "rgba(255,61,113,0.22)"; g.fillRect(x - bw / 2, vy - vh, bw, vh);
+    }
+    // candles
+    for (const b of bars) {
+      const x = X(b.t + 150), up = b.c >= b.o, col = up ? "#2bff9a" : "#ff3d71";
+      g.strokeStyle = col; g.lineWidth = 1; g.beginPath(); g.moveTo(x, Y(b.h)); g.lineTo(x, Y(b.l)); g.stroke();
+      const yo = Y(b.o), yc = Y(b.c), top = Math.min(yo, yc), hh = Math.max(1, Math.abs(yc - yo));
+      g.fillStyle = up ? "rgba(43,255,154,0.85)" : "rgba(255,61,113,0.85)"; g.shadowColor = col; g.shadowBlur = 6;
+      g.fillRect(x - bw / 2, top, bw, hh); g.shadowBlur = 0;
+    }
+    // level lines with labels
+    g.textAlign = "left"; g.textBaseline = "middle";
+    for (const l of lines) {
+      if (!l.price) continue;
+      const y = Y(l.price); g.strokeStyle = l.color; g.lineWidth = 1.2; g.setLineDash(l.dash || []);
+      g.beginPath(); g.moveTo(l.from ? X(l.from) : PADL, y); g.lineTo(PADL + plotW, y); g.stroke(); g.setLineDash([]);
+      pill(g, PADL + plotW + 2, y, (l.label ? l.label + " " : "") + fmt(l.price), l.color, PADR - 4);
+    }
+    // the last price
+    const last = bars[bars.length - 1];
+    const ly = Y(last.c), lc = last.c >= (d.prev_close || last.o) ? "#2bff9a" : "#ff3d71";
+    g.setLineDash([1, 3]); g.strokeStyle = lc; g.beginPath(); g.moveTo(PADL, ly); g.lineTo(PADL + plotW, ly); g.stroke(); g.setLineDash([]);
+    pill(g, PADL + plotW + 2, ly, fmt(last.c), lc, PADR - 4, true);
+    // now marker
+    if (this.opts.now) {
+      const x = X(this.opts.now); if (x > PADL && x < PADL + plotW) {
+        g.strokeStyle = "rgba(255,255,255,0.35)"; g.setLineDash([2, 3]); g.beginPath(); g.moveTo(x, PADT); g.lineTo(x, H - PADB); g.stroke(); g.setLineDash([]);
+        g.fillStyle = "#fff"; g.font = "9.5px JetBrains Mono, monospace"; g.textAlign = "center"; g.fillText("NOW", x, PADT + 4);
+      }
+    }
+    // crosshair + tip
+    const hv = this.hover, tip = $("tip");
+    if (hv && hv.x > PADL && hv.x < PADL + plotW) {
+      g.strokeStyle = "rgba(0,229,255,0.35)"; g.lineWidth = 1; g.setLineDash([3, 3]);
+      g.beginPath(); g.moveTo(hv.x, PADT); g.lineTo(hv.x, H - PADB); g.moveTo(PADL, hv.y); g.lineTo(PADL + plotW, hv.y); g.stroke(); g.setLineDash([]);
+      const t = t0 + (hv.x - PADL) / plotW * (t1 - t0);
+      let b = null; for (const x of bars) if (x.t <= t && t < x.t + 300) b = x;
+      const py = hi - (hv.y - PADT) / plotH * (hi - lo);
+      if (hv.y < PADT + plotH) pill(g, PADL + plotW + 2, hv.y, fmt(py), "#00e5ff", PADR - 4);
+      if (b) {
+        tip.style.display = "block";
+        tip.innerHTML = `<b>${hm(b.t)}</b> &nbsp;O ${fmt(b.o)} H ${fmt(b.h)} L ${fmt(b.l)} <span class="${b.c >= b.o ? "up" : "down"}">C ${fmt(b.c)}</span><br><span class="muted">Vol ${Number(b.v).toLocaleString("en-IN")}</span>`;
+        const tx = Math.min(hv.x + 14, W - tip.offsetWidth - 8); tip.style.left = tx + "px"; tip.style.top = Math.max(6, hv.y - 46) + "px";
+      } else tip.style.display = "none";
+    }
+  }
+};
+function niceStep(raw) { const p = Math.pow(10, Math.floor(Math.log10(raw || 1))); const n = raw / p; return (n < 1.5 ? 1 : n < 3 ? 2 : n < 7 ? 5 : 10) * p; }
+function pill(g, x, y, text, color, maxw, solid) {
+  g.font = "10px JetBrains Mono, monospace"; const w = Math.min(maxw, g.measureText(text).width + 10);
+  g.fillStyle = solid ? color : "rgba(5,9,20,0.92)"; g.strokeStyle = color; g.lineWidth = 1;
+  roundRect(g, x, y - 8, w, 16, 4); g.fill(); g.stroke();
+  g.fillStyle = solid ? "#001018" : color; g.textAlign = "left"; g.textBaseline = "middle"; g.fillText(text, x + 5, y + 0.5, w - 8);
+}
+function roundRect(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+
+/* ====================================================================== top bar */
+function renderTop() {
+  const st = S.status; if (!st) return;
+  const [d, t] = st.now_ist.split(" ");
+  $("clock").innerHTML = esc(t) + "<small>IST</small>";
+  const ses = st.session || {};
+  $("dateline").textContent = (ses.weekday || "") + " " + d;
+  const m = minutes(t), open = ses.open;
+  let ph = open ? "SESSION OPEN" : ("CLOSED · " + (ses.reason || ""));
+  if (open) {
+    const c = st.config || {};
+    if (m < minutes(c.no_entries_before || "09:30")) ph = "OPENING RANGE FORMING";
+    else if (m >= minutes(c.flat_by || "15:00")) ph = "FLAT-BY PASSED · CLOSE ANY POSITION";
+    else if (m >= minutes(c.no_entries_after || "14:45")) ph = "NO NEW ENTRIES · EXITS ONLY";
+    else ph = "ENTRY WINDOW OPEN";
+  } else if (ses.next_open) ph += " · NEXT " + ses.next_open;
+  $("phase").innerHTML = `<span class="${open ? "up" : "muted"}">●</span> ` + esc(ph);
+  renderTrack(ses.opens ? m : 0, st.config || {});
+  const mode = $("chipMode");
+  mode.className = "chip " + (st.demo ? "demo" : st.paper ? "paper" : "live");
+  mode.innerHTML = `<span class="dot" ${st.demo ? 'style="background:var(--violet)"' : ""}></span>` + (st.demo ? "DEMO · PAPER" : st.paper ? "PAPER" : "LIVE · REAL MONEY");
+  const data = $("chipData");
+  data.className = "chip " + (st.source === "fyers" ? "ok" : st.source === "demo" ? "" : "warn");
+  data.innerHTML = '<span class="dot"></span>' + (st.source === "fyers" ? "FYERS LIVE" : st.source === "demo" ? "REPLAY DATA" : "YAHOO · DELAYED");
+  const fb = $("btnFyers");
+  fb.textContent = st.demo ? "FYERS · DEMO" : st.fyers.logged_in ? "FYERS ✓" : st.fyers.configured ? "FYERS LOGIN" : "CONNECT FYERS";
+  fb.className = "sm " + (st.fyers.logged_in ? "" : st.demo ? "ghost" : "hot");
+  if (st.demo) {
+    $("demobar").style.display = "flex";
+    $("btnPlay").textContent = st.clock.playing ? "❚❚" : "▶";
+    if (!S.scrubbing) { $("scrub").value = m; $("scrubLbl").textContent = t.slice(0, 5); }
+    $("speed").value = String(st.clock.speed);
+  }
+}
+const minutes = (s) => { const [h, mm] = String(s).split(":").map(Number); return h * 60 + mm; };
+function renderTrack(m, c) {
+  const a = 555, b = 930, P = (x) => Math.max(0, Math.min(100, (x - a) / (b - a) * 100));
+  const marks = [["09:15", "OPEN", 0], ["09:30", "9:30", 1], [c.no_entries_after || "14:45", "LAST ENTRY " + (c.no_entries_after || "14:45"), 1], [c.flat_by || "15:00", "FLAT " + (c.flat_by || "15:00"), 0], ["15:30", "CLOSE", 0]];
+  $("track").innerHTML = `<div class="rail"><div class="zone" style="left:${P(555)}%;width:${P(570) - P(555)}%;background:rgba(139,92,255,.25)"></div>
+    <div class="zone" style="left:${P(minutes(c.no_entries_after || "14:45"))}%;right:0;background:rgba(255,176,32,.18)"></div>
+    <div class="fill" style="width:${P(m)}%"></div></div>` +
+    marks.map(([t, l, up]) => `<div class="mk ${up ? "hi" : ""}" style="left:${P(minutes(t))}%"><span>${l}</span></div>`).join("") +
+    (m >= a && m <= b ? `<div class="now" style="left:${P(m)}%"></div>` : "");
+}
+
+/* ====================================================================== left: scanner + favourites */
+function renderHits() {
+  const box = $("hits");
+  if (!S.hits.length) { box.innerHTML = '<div class="empty">No breakouts yet. Run SCAN after 9:30.</div>'; return; }
+  box.innerHTML = S.hits.map((h) => {
+    const q = S.quotes[h.symbol] || {};
+    return `<div class="li ${h.symbol === S.symbol ? "active" : ""}" data-sym="${esc(h.symbol)}" tabindex="0">
+      <div class="sym">${esc(h.symbol)} <span class="tag">ORB</span></div>
+      <div class="px">${fmt(q.price != null ? q.price : h.price)} <span class="${cls(q.pct)}" style="font-size:11px">${pct(q.pct)}</span></div>
+      <div class="meta"><span>${esc(h.at || "")}</span><span>OR ${fmt(h.or_low)}–${fmt(h.or_high)}</span><span class="up">+${fmt(h.pct_over)}%</span></div></div>`;
+  }).join("");
+}
+function renderFavs() {
+  const favs = (S.status && S.status.favorites) || [];
+  const box = $("favs");
+  if (!favs.length) { box.innerHTML = '<div class="empty">Add the stocks you follow.</div>'; return; }
+  box.innerHTML = favs.map((s) => {
+    const q = S.quotes[s] || {};
+    return `<div class="li ${s === S.symbol ? "active" : ""}" data-sym="${esc(s)}" tabindex="0">
+      <div class="sym">${esc(s)}</div><canvas data-spark="${esc(s)}"></canvas>
+      <div class="px">${fmt(q.price)}<br><span class="${cls(q.pct)}" style="font-size:11px">${pct(q.pct)}</span></div>
+      <div class="meta" style="justify-content:flex-end"><button class="ghost sm" data-rm="${esc(s)}" aria-label="Remove ${esc(s)}">remove</button></div></div>`;
+  }).join("");
+  box.querySelectorAll("canvas[data-spark]").forEach((c) => { const q = S.quotes[c.dataset.spark] || {}; spark(c, q.spark, (q.pct || 0) >= 0 ? "#2bff9a" : "#ff3d71"); });
+}
+function bindLists() {
+  for (const id of ["hits", "favs"]) {
+    $(id).addEventListener("click", (e) => {
+      const rm = e.target.closest("[data-rm]");
+      if (rm) { e.stopPropagation(); const favs = S.status.favorites.filter((x) => x !== rm.dataset.rm); api("/api/favorites", { symbols: favs }).then((r) => { S.status.favorites = r.favorites; renderFavs(); }); return; }
+      const li = e.target.closest("[data-sym]"); if (li) selectSymbol(li.dataset.sym);
+    });
+    $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") { const li = e.target.closest("[data-sym]"); if (li) selectSymbol(li.dataset.sym); } });
+  }
+}
+
+/* ====================================================================== the chart panel */
+async function selectSymbol(sym) {
+  S.symbol = sym; renderHits(); renderFavs();
+  await loadChart(true);
+  renderPipe();
+}
+async function loadChart(force) {
+  if (!S.symbol) return Chart.set(null);
+  try {
+    const c = await api("/api/chart?symbol=" + encodeURIComponent(S.symbol));
+    S.chart = c; S.lastChartAt = Date.now();
+  } catch (e) { S.chart = { symbol: S.symbol, bars: [], message: e.message }; }
+  renderChart();
+}
+function renderChart() {
+  const c = S.chart; if (!c) return;
+  $("symName").textContent = c.symbol;
+  const q = S.quotes[c.symbol] || {};
+  const px = c.price != null ? c.price : q.price, pc = c.pct != null ? c.pct : q.pct;
+  $("symPx").textContent = fmt(px); $("symPx").className = "p " + cls(pc);
+  $("symChg").innerHTML = c.prev_close ? `<span class="${cls(pc)}">${pct(pc)}</span> <span class="muted">prev ${fmt(c.prev_close)}</span>` : "";
+  $("symSrc").textContent = c.source === "fyers" ? "FYERS" : c.source === "demo" ? "REPLAY" : "YAHOO DELAYED";
+  const st = S.state, entry = st.entry, plan = st.plan, tm = st.timemachine;
+  const lines = [], legend = [];
+  let or = null;
+  const mine = (o) => o && String(o.symbol || "").toUpperCase() === c.symbol;
+  if (mine(entry) && entry.opening_range) or = { high: entry.opening_range.high, low: entry.opening_range.low, minutes: entry.opening_range.minutes || 15 };
+  else if (mine(plan) && plan.opening_range) or = plan.opening_range;
+  if (or) legend.push('<span><i style="background:#8b5cff"></i>Opening range</span>');
+  if (mine(plan)) {
+    lines.push({ price: plan.entry, color: "#00e5ff", label: "ENTRY" }, { price: plan.stop, color: "#ff3d71", label: "STOP", dash: [6, 4] }, { price: plan.target, color: "#2bff9a", label: "TGT", dash: [6, 4] });
+    legend.push('<span><i style="background:#00e5ff"></i>Entry</span><span><i style="background:#ff3d71"></i>Stop</span><span><i style="background:#2bff9a"></i>Target</span>');
+  }
+  let bands = null;
+  if (mine(tm && tm.plan) && tm.mc && tm.mc.bands && c.bars.length) {
+    const day0 = c.bars[0].t; const eb = (tm.plan.entry_bar || 0);
+    bands = { t0: day0 + (eb + 1) * 300, rows: tm.mc.bands };
+    legend.push('<span><i style="background:#ff2bd6"></i>Time Machine cone (5–95%, 25–75%, median)</span>');
+  }
+  $("legend").innerHTML = legend.join("");
+  let sessionStart = null, sessionEnd = null;
+  if (c.bars.length) { const d0 = new Date((c.bars[0].t + 19800) * 1000); const base = Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth(), d0.getUTCDate()) / 1000 - 19800; sessionStart = base + 555 * 60; sessionEnd = base + 930 * 60; }
+  const nowTs = S.status ? (Date.parse(S.status.now_ist.replace(" ", "T") + "+05:30") / 1000) : null;
+  Chart.set(c, { lines, or, bands, sessionStart, sessionEnd, now: nowTs });
+}
+
+/* ====================================================================== pipeline */
+function renderPipe() {
+  const st = S.state, sym = S.symbol, mine = (o) => o && sym && String(o.symbol || "").toUpperCase() === sym;
+  const tk = (st.tickets || [])[0], rk = st.risk && st.risk.results && st.risk.results[0];
+  const pos = S.book && S.book.positions.find((p) => p.symbol === sym);
+  const traded = S.book && S.book.journal.find((t) => t.symbol === sym);
+  const nodes = [
+    ["SCAN", S.hits.length ? "done" : "", S.hits.length ? S.hits.length + " hits" : "—"],
+    ["ENTRY", mine(st.entry) ? (st.entry.status === "triggered" ? "done" : st.entry.status === "waiting" ? "now" : "warn") : "", mine(st.entry) ? st.entry.status : "—"],
+    ["PLAN", mine(st.plan) ? "done" : "", mine(st.plan) ? fmt(st.plan.reward_risk, 1) + "R" : "—"],
+    ["REPLAY", mine(st.timemachine && st.timemachine.plan) ? "done" : "", mine(st.timemachine && st.timemachine.plan) ? Math.round(100 * st.timemachine.mc.p_target) + "% tgt" : "—"],
+    ["SIZE", tk && tk.tool_input && tk.tool_input.symbol.indexOf(sym || "~") >= 0 ? "done" : "", tk && tk.tool_input ? tk.tool_input.qty + " sh" : "—"],
+    ["RISK", rk && rk.symbol === sym ? (rk.verdict === "PASS" ? "done" : "bad") : "", rk && rk.symbol === sym ? rk.verdict : "—"],
+    ["YES", tk && /APPROVED|DONE/.test(tk.status) ? "done" : tk && tk.ready ? "now" : "", tk && /APPROVED/.test(tk.status) ? "approved" : tk && /DONE/.test(tk.status) ? "done" : tk && tk.ready ? "waiting" : "—"],
+    ["FILL", pos ? "done" : traded ? "done" : "", pos ? pos.shares + " open" : traded ? "closed" : "—"],
+    ["EXIT", traded && !pos ? "done" : pos ? "now" : "", traded && !pos ? inr(traded.pnl, 0) : pos ? "open" : "—"],
+  ];
+  $("pipe").innerHTML = nodes.map(([n, c, s], i) => `<div class="node ${c}"><div class="orb">${String(i + 1).padStart(2, "0")}</div><div class="nm">${n}</div><div class="st">${esc(s)}</div></div>`).join("");
+}
+
+/* ====================================================================== right: entry & plan, time machine, order */
+function renderPlan() {
+  const st = S.state, e = st.entry, p = st.plan, box = $("planBox");
+  let html = "";
+  if (e) {
+    const col = e.status === "triggered" ? "up" : e.status === "waiting" ? "amber" : "muted";
+    html += `<div class="row" style="margin-bottom:8px"><span class="chip"><span class="dot" style="background:var(--${e.status === "triggered" ? "up" : e.status === "waiting" ? "amber" : "dim"})"></span>${esc(e.symbol)} · ${esc(e.status)}</span>
+      <span class="muted mono" style="font-size:11px">${esc(e.now || "")}</span></div>
+      <div class="note" style="color:var(--text)">${esc(e.reason || "")}</div>`;
+    if (e.opening_range) html += `<div class="note" style="margin-top:4px">Opening range ${fmt(e.opening_range.low)} – ${fmt(e.opening_range.high)} ${e.opening_range.complete === false ? "(forming)" : ""}</div>`;
+  }
+  if (p) {
+    html += `<div style="height:10px"></div><div class="stat3">
+      <div class="stat"><div class="l">Entry</div><div class="v" style="color:var(--cyan)">${fmt(p.entry)}</div></div>
+      <div class="stat"><div class="l">Stop</div><div class="v down">${fmt(p.stop)}</div></div>
+      <div class="stat"><div class="l">Target</div><div class="v up">${fmt(p.target)}</div></div></div>
+      <dl class="kv" style="margin-top:10px"><dt>Risk a share</dt><dd>${inr(p.risk_per_share)}</dd><dt>Reward : risk</dt><dd>${fmt(p.reward_risk, 2)}</dd>
+      <dt>Stop rule</dt><dd>${esc(p.stop_label || p.stop_rule || "")}</dd><dt>Flat by</dt><dd>${esc(p.flat_by)} IST</dd></dl>
+      <div class="row" style="margin-top:10px"><select id="stopRule" aria-label="Stop rule"><option value="">stop: OR midpoint</option><option value="or-low">stop: OR low</option><option value="atr:1">stop: 1 ATR</option></select>
+      <select id="tgtRule" aria-label="Target"><option value="">target: 2R</option><option value="1R">1R</option><option value="1.5R">1.5R</option><option value="3R">3R</option></select>
+      <button class="sm" id="btnReplan">RE-PLAN</button></div>`;
+    for (const w of p.warnings || []) html += `<div class="note amber" style="margin-top:6px">⚠ ${esc(w)}</div>`;
+  }
+  box.innerHTML = html || '<div class="empty">Pick a symbol, then CHECK: the entry timer watches for a 5-minute close above the opening range.</div>';
+  const rp = $("btnReplan"); if (rp) rp.onclick = () => busy("plan", rp, async () => { await api("/api/plan", { stop: $("stopRule").value || undefined, target: $("tgtRule").value || undefined }); await refreshState(); });
+}
+function renderTM() {
+  const tm = S.state.timemachine, box = $("tmBox");
+  if (!tm || !tm.mc) { box.innerHTML = '<div class="empty">10,000 replays of the rest of the session from the stock\'s own bars, plus every past day the setup fired.</div>'; return; }
+  const mc = tm.mc, h = tm.history || {};
+  const arc = (p0, p1, color, r) => { const a0 = p0 * 2 * Math.PI - Math.PI / 2, a1 = p1 * 2 * Math.PI - Math.PI / 2; const big = p1 - p0 > 0.5 ? 1 : 0;
+    const x0 = 64 + r * Math.cos(a0), y0 = 64 + r * Math.sin(a0), x1 = 64 + r * Math.cos(a1), y1 = 64 + r * Math.sin(a1);
+    return p1 - p0 <= 0.0005 ? "" : `<path d="M${x0} ${y0} A${r} ${r} 0 ${big} 1 ${x1} ${y1}" stroke="${color}" stroke-width="10" fill="none" stroke-linecap="butt" style="filter:drop-shadow(0 0 6px ${color})"/>`; };
+  const pt = mc.p_target, ps = mc.p_stop, pn = mc.p_neither;
+  const hs = h.triggered ? `${h.target} target · ${h.stop} stop · ${h.close} at close, of ${h.triggered} past triggers (avg ${fmt(h.avg_R, 2)}R)` : "no past triggers in the window";
+  box.innerHTML = `<div class="gauge"><svg viewBox="0 0 128 128" role="img" aria-label="Target first ${Math.round(pt * 100)} percent">
+      <circle cx="64" cy="64" r="50" stroke="rgba(255,255,255,.06)" stroke-width="10" fill="none"/>
+      ${arc(0, pt, "#2bff9a", 50)}${arc(pt, pt + ps, "#ff3d71", 50)}${arc(pt + ps, 1, "#3b4a66", 50)}
+      <circle cx="64" cy="64" r="36" stroke="rgba(0,229,255,.12)" stroke-width="1" fill="none"/>
+      <text x="64" y="60" text-anchor="middle" fill="#d8e6ff" font-family="JetBrains Mono, monospace" font-size="20" font-weight="700">${Math.round(pt * 100)}%</text>
+      <text x="64" y="78" text-anchor="middle" fill="#6f84a8" font-family="Space Grotesk, sans-serif" font-size="8.5" letter-spacing="1.5">TARGET FIRST</text></svg>
+    <div><dl class="kv"><dt><span class="up">■</span> Target first</dt><dd>${(pt * 100).toFixed(1)}%</dd><dt><span class="down">■</span> Stop first</dt><dd>${(ps * 100).toFixed(1)}%</dd>
+      <dt><span class="muted">■</span> Neither by ${esc(tm.plan.flat_by || "close")}</dt><dd>${(pn * 100).toFixed(1)}%</dd><dt>Avg result</dt><dd class="${cls(mc.avg_R)}">${fmt(mc.avg_R, 2)}R</dd>
+      <dt>Close 5–95%</dt><dd>${fmt(mc.p5_close)}–${fmt(mc.p95_close)}</dd></dl></div></div>
+    <div class="note" style="margin:8px 0">History: ${esc(hs)}</div>
+    <div class="verdict">${esc(tm.verdict || "")}</div>`;
+}
+function renderOrder() {
+  const st = S.state, box = $("orderBox"), rk = st.risk, tk = st.tickets || [], sz = S.sizing;
+  let html = "";
+  if (sz && sz.sizing) {
+    const s = sz.sizing, lim = (s.limits || []).find((l) => l.binds);
+    html += `<div class="stat3"><div class="stat"><div class="l">Shares</div><div class="v">${s.qty != null ? s.qty : "—"}</div></div>
+      <div class="stat"><div class="l">Value</div><div class="v" style="font-size:14px">${inr(s.cost != null ? s.cost : s.qty * s.entry, 0)}</div></div>
+      <div class="stat"><div class="l">Max loss</div><div class="v down" style="font-size:14px">${inr(s.max_loss)}</div></div></div>
+      ${lim ? `<div class="note" style="margin-top:6px">Bound by ${esc(lim.name)}: ${esc(lim.how)}</div>` : ""}${s.refusal ? `<div class="err" style="margin-top:6px">${esc(s.refusal)}</div>` : ""}`;
+  }
+  const r = rk && rk.results && rk.results[0];
+  if (r) {
+    html += `<div class="row" style="margin:12px 0 4px"><span class="stamp ${r.verdict === "PASS" ? "pass" : "block"}">${esc(r.verdict)}</span><span class="muted mono" style="font-size:11px">${esc(r.amount)} ${esc(r.symbol)} · ${esc(rk.now_ist || "")}</span></div>`;
+    if (r.reasons && r.reasons.length) html += `<ul class="reasons down">${r.reasons.map((x) => "<li>" + esc(x) + "</li>").join("")}</ul>`;
+    if (r.info && r.info.length) html += `<ul class="reasons muted">${r.info.map((x) => "<li>" + esc(x) + "</li>").join("")}</ul>`;
+    for (const w of r.warnings || []) html += `<div class="note amber">⚠ ${esc(w)}</div>`;
+  }
+  for (const t of tk) {
+    const approved = /APPROVED/.test(t.status), done = /DONE/.test(t.status);
+    html += `<div style="margin-top:12px" class="ticket">${esc(t.plain)}${t.why ? "\n\n" + esc(t.why) : ""}\n\n<span class="${t.ready ? "up" : approved ? "amber" : "muted"}">${esc(t.status)}</span></div>`;
+    if (t.ready) html += `<div class="row" style="margin-top:8px"><input id="yes${t.index}" placeholder='type "yes" for this one order' aria-label="Your answer" style="flex:1">
+      <button class="primary" data-approve="${t.index}">APPROVE</button><button class="ghost sm" data-decline="${t.index}">NO</button></div>
+      <div class="note" style="margin-top:4px">Your words are recorded as typed. Only a reply starting with "yes" counts, for this one order.</div>`;
+    if (approved) html += `<div class="row" style="margin-top:8px"><button class="hot" data-exec="${t.index}">${t.paper ? "RECORD PAPER FILL" : "SEND TO FYERS"}</button>
+      <span class="note">${t.paper ? "Paper: fills at the latest price, nothing goes to FYERS." : "LIVE: real money. You will type the symbol to confirm."}</span></div>`;
+    if (done) html += "";
+  }
+  box.innerHTML = html || '<div class="empty">Size the trade to your max loss, then the risk check: only a PASS can become an order.</div>';
+}
+function bindOrderBox() {
+  $("orderBox").addEventListener("click", async (e) => {
+    const a = e.target.closest("[data-approve]"), d = e.target.closest("[data-decline]"), x = e.target.closest("[data-exec]");
+    if (a) await busy("approve", a, async () => { const idx = a.dataset.approve; const r = await api("/api/approve", { index: idx, reply: $("yes" + idx).value });
+      toast(r.message.split("\n")[0], r.ok ? "good" : "warn"); await refreshState(); });
+    if (d) await busy("decline", d, async () => { await api("/api/decline", { index: d.dataset.decline }); toast("Recorded your no. Nothing was sent."); await refreshState(); });
+    if (x) {
+      const idx = x.dataset.exec, t = (S.state.tickets || []).find((q) => String(q.index) === idx);
+      if (t && !t.paper) return confirmLive(t);
+      await busy("exec", x, async () => { const r = await api("/api/execute", { index: idx }); toast(r.message, r.ok ? "good" : "bad", 9000); await Promise.all([refreshState(), refreshBook()]); });
+    }
+  });
+}
+function confirmLive(t) {
+  const sym = t.tool_input.symbol.split(":").pop().replace("-EQ", "");
+  openModal("LIVE ORDER · REAL MONEY", `<div class="ticket">${esc(t.plain)}</div>
+    <div class="note" style="margin:10px 0">This sends the order to FYERS with your own money. FYERS will get exactly:</div>
+    <div class="ticket">${esc(JSON.stringify(t.tool_input, null, 2))}</div>
+    <div class="field" style="margin-top:12px"><label for="cfm">Type ${esc(sym)} to send it</label><input id="cfm" autocomplete="off"></div>
+    <div class="row"><button class="danger" id="cfmGo">SEND TO FYERS</button><button class="ghost" id="cfmNo">Cancel</button></div>`);
+  $("cfmNo").onclick = closeModal;
+  $("cfmGo").onclick = () => busy("live", $("cfmGo"), async () => {
+    const r = await api("/api/execute", { index: t.index, confirm: $("cfm").value });
+    closeModal(); toast(r.message, r.ok ? "good" : "bad", 12000); await Promise.all([refreshState(), refreshBook()]);
+  });
+}
+
+/* ====================================================================== bottom: positions, news, journal */
+function renderBook() {
+  const b = S.book; if (!b) return;
+  $("dayPnl").textContent = inr(b.day_pnl); $("dayPnl").className = "val mono " + cls(b.day_pnl);
+  $("cashLine").textContent = "cash " + inr(b.cash, 0);
+  const L = b.limits || {};
+  const bar = (v, max, hot) => `<div class="bar ${hot ? "hot" : ""}"><i style="width:${max ? Math.min(100, 100 * v / max) : 0}%"></i></div>`;
+  let html = `<div class="stat3" style="grid-template-columns:1fr 1fr">
+    <div class="stat"><div class="l">Trades today</div><div class="v">${L.trades} <span class="muted" style="font-size:12px">/ ${L.max_trades || "—"}</span></div>${bar(L.trades, L.max_trades)}</div>
+    <div class="stat"><div class="l">Open risk + lost today</div><div class="v">${inr((L.at_risk || 0), 0)} <span class="muted" style="font-size:12px">/ ${inr(L.max_daily_loss, 0)}</span></div>${bar((L.at_risk || 0) + (L.loss_today || 0), L.max_daily_loss, true)}</div></div>`;
+  if (b.positions.length) {
+    html += `<table style="margin-top:10px"><thead><tr><th>Symbol</th><th>Qty</th><th>Avg</th><th>LTP</th><th>P&amp;L</th><th></th></tr></thead><tbody>` +
+      b.positions.map((p) => {
+        let prog = "";
+        if (p.stop && p.target && p.price) { const f = Math.max(0, Math.min(1, (p.price - p.stop) / (p.target - p.stop)));
+          prog = `<div class="bar" style="margin-top:4px;width:110px"><i style="width:${f * 100}%;background:linear-gradient(90deg,#ff3d71,#ffb020,#2bff9a)"></i></div><div class="muted" style="font-size:9.5px">stop ${fmt(p.stop)} → tgt ${fmt(p.target)}</div>`; }
+        return `<tr><td>${esc(p.symbol)}</td><td>${p.shares}</td><td>${fmt(p.avg)}</td><td>${fmt(p.price)}</td>
+          <td class="${cls(p.pnl)}">${inr(p.pnl)}<br><span style="font-size:10px">${pct(p.pnl_pct)}</span>${prog}</td>
+          <td style="text-align:right">${!S.status.paper ? `<button class="sm" data-protect="${esc(p.symbol)}">STOP-LOSS</button> ` : ""}<button class="sm danger" data-flatten="${esc(p.symbol)}">FLATTEN</button></td></tr>`;
+      }).join("") + "</tbody></table>";
+  } else html += '<div class="empty" style="margin-top:8px">No open positions.</div>';
+  if (b.broker_positions && b.broker_positions.error) html += `<div class="err" style="margin-top:8px">FYERS positions: ${esc(b.broker_positions.error)}</div>`;
+  const log = (b.log || []).slice(-6).reverse();
+  if (log.length) html += `<div class="note" style="margin-top:12px;letter-spacing:.14em">TODAY'S LOG</div>` + log.map((r) => `<div class="mono" style="font-size:11px;padding:3px 0;color:var(--muted)"><span style="color:var(--text)">${esc(String(r.at || "").slice(11, 16))}</span> ${esc(r.status)} · ${esc(String(r.plain || "").split(" / ")[0])}${r.broker_order_id ? " · id " + esc(r.broker_order_id) : ""}</div>`).join("");
+  $("posBox").innerHTML = html;
+  // journal
+  const s = b.stats || {};
+  let j = `<div class="stat3"><div class="stat"><div class="l">Trades</div><div class="v">${s.trades || 0}</div></div>
+    <div class="stat"><div class="l">Win rate</div><div class="v">${s.win_rate != null ? s.win_rate + "%" : "—"}</div></div>
+    <div class="stat"><div class="l">Net</div><div class="v ${cls(s.net)}" style="font-size:14px">${inr(s.net, 0)}</div></div></div>
+    <canvas id="equity" style="width:100%;height:60px;margin-top:10px"></canvas>`;
+  if (b.journal.length) j += `<table style="margin-top:6px"><thead><tr><th>Symbol</th><th>Date</th><th>In → Out</th><th>P&amp;L</th><th>R</th></tr></thead><tbody>` +
+    b.journal.slice(-8).reverse().map((t) => `<tr><td>${esc(t.symbol)}</td><td>${esc(t.date.slice(5))}</td><td>${fmt(t.entry)} → ${fmt(t.exit)}</td><td class="${cls(t.pnl)}">${inr(t.pnl, 0)}</td><td class="${cls(t.r)}">${t.r != null ? fmt(t.r, 2) : "—"}</td></tr>`).join("") + "</tbody></table>";
+  else j += '<div class="empty">Closed trades show here, with P&amp;L and R.</div>';
+  $("journalBox").innerHTML = j;
+  spark($("equity"), b.equity.length > 1 ? [0].concat(b.equity) : null, "#00e5ff");
+}
+function bindPos() {
+  $("posBox").addEventListener("click", async (e) => {
+    const f = e.target.closest("[data-flatten]"), p = e.target.closest("[data-protect]");
+    if (f) await busy("flat", f, async () => { const r = await api("/api/flatten", { symbol: f.dataset.flatten }); S.sizing = null; toast(r.message.split("\n").slice(0, 2).join("\n"), "warn", 9000);
+      S.state.risk = r.risk; S.state.tickets = r.tickets; renderOrder(); renderPipe(); });
+    if (p) await busy("prot", p, async () => { const r = await api("/api/protect", { symbol: p.dataset.protect }); toast(r.message.split("\n")[0], "warn", 9000);
+      S.state.risk = r.risk; S.state.tickets = r.tickets; renderOrder(); renderPipe(); });
+  });
+}
+async function refreshNews() {
+  try {
+    const n = await api("/api/news?symbols=" + encodeURIComponent(((S.status && S.status.favorites) || []).slice(0, 12).join(",")));
+    const items = (n.items || []).slice(0, 40);
+    let html = (n.moves || []).filter((m) => m.moving).map((m) => `<div class="it"><div class="t">MOVING</div><div class="h"><b>${esc(m.ticker)}</b> <span class="${cls(m.pct)}">${pct(m.pct)}</span> from yesterday's close ${fmt(m.prev_close)}</div></div>`).join("");
+    html += items.map((i) => { const t = new Date(i.time); const tt = isNaN(t) ? "" : new Date(t.getTime() + 19800000).toISOString().slice(11, 16);
+      const imp = i.important || (i.tags || []).includes("earnings") && i.kind !== "headline";
+      return `<div class="it"><div class="t">${tt}<br>${esc(i.ticker || (i.touches || [])[0] || "")}</div><div class="h">${imp ? '<span class="imp">!</span>' : ""}<a href="${esc(i.link)}" target="_blank" rel="noopener">${esc(i.title)}</a>
+        <div class="row" style="margin-top:3px;gap:5px"><span class="muted mono" style="font-size:10px">${esc(i.source || "")}</span>${(i.tags || []).map((g) => `<span class="tag">${esc(g)}</span>`).join("")}</div></div></div>`; }).join("");
+    $("newsBox").innerHTML = html || '<div class="empty">Nothing new for your symbols.</div>';
+  } catch (e) { $("newsBox").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+}
+
+/* ====================================================================== refreshers + actions */
+async function refreshState() {
+  try { S.state = await api("/api/state"); } catch (e) { return; }
+  if (!S.symbol && S.state.plan) S.symbol = S.state.plan.symbol;
+  renderPlan(); renderTM(); renderOrder(); renderPipe(); renderChart();
+}
+async function refreshBook() { try { S.book = await api("/api/book"); renderBook(); renderPipe(); } catch (e) { } }
+
+async function doScan(btn) {
+  await busy("scan", btn, async () => {
+    $("scanInfo").textContent = "Scanning… a full-market scan takes a few minutes the first time.";
+    const r = await api("/api/scan", { scope: $("scanScope").value });
+    S.hits = r.hits || [];
+    $("scanInfo").textContent = `${r.as_of || ""} · ${r.scanned || 0} charts · ${S.hits.length} breakouts${r.failed ? " · " + r.failed + " failed" : ""}`;
+    renderHits(); renderPipe();
+    if (!S.symbol && S.hits.length) selectSymbol(S.hits[0].symbol);
+  });
+}
+async function doEntry(btn) { if (!S.symbol) return toast("Pick a symbol first.", "warn");
+  await busy("entry", btn, async () => { const r = await api("/api/entry", { symbol: S.symbol }); toast(`${r.symbol}: ${r.status}. ${r.reason || ""}`, r.status === "triggered" ? "good" : "warn"); await refreshState(); }); }
+async function doPlan(btn) { await busy("plan", btn, async () => { const r = await api("/api/plan", {}); toast(`Plan: entry ${fmt(r.entry)}, stop ${fmt(r.stop)}, target ${fmt(r.target)}`, "good"); await refreshState(); }); }
+async function doTM(btn) { await busy("tm", btn, async () => { await api("/api/timemachine", {}); await refreshState(); }); }
+async function doSize(btn) { await busy("size", btn, async () => { S.sizing = await api("/api/size", {}); await doRisk(null); }); }
+async function doRisk(btn) { await busy("risk", btn, async () => { const r = await api("/api/risk", {}); S.state.risk = r.risk; S.state.tickets = r.tickets; renderOrder(); renderPipe(); }); }
+async function analyze(btn) {
+  if (!S.symbol) return toast("Pick a symbol first.", "warn");
+  await busy("analyze", btn, async () => {
+    const e = await api("/api/entry", { symbol: S.symbol }); await refreshState();
+    if (e.status !== "triggered") { toast(`${e.symbol} has not triggered: ${e.reason || e.status}. Analysis stops at the entry.`, "warn", 9000); return; }
+    await api("/api/plan", {}); await refreshState();
+    try { await api("/api/timemachine", {}); } catch (err) { toast("Time Machine: " + err.message, "warn", 8000); }
+    await refreshState();
+    S.sizing = await api("/api/size", {});
+    const r = await api("/api/risk", {}); S.state.risk = r.risk; S.state.tickets = r.tickets; renderOrder(); renderPipe(); renderChart();
+    const v = r.risk && r.risk.results && r.risk.results[0];
+    toast(v ? `Risk check: ${v.verdict}${v.reasons.length ? " · " + v.reasons[0] : ""}. Nothing was placed.` : "Analysis done.", v && v.verdict === "PASS" ? "good" : "bad", 9000);
+  });
+}
+
+/* ====================================================================== alerts (on screen only, never orders) */
+function checkAlerts() {
+  const b = S.book, st = S.status; if (!b || !st) return;
+  const t = minutes(st.now_ist.split(" ")[1]), fb = minutes(st.config.flat_by || "15:00");
+  for (const p of b.positions) {
+    const px = (S.quotes[p.symbol] || {}).price || p.price, day = st.now_ist.slice(0, 10);
+    const fire = (k, msg, kind) => { const key = day + k + p.symbol; if (!S.fired.has(key)) { S.fired.add(key); toast(msg, kind, 12000); } };
+    if (p.stop && px && px <= p.stop) fire("stop", `🔻 ${p.symbol} at ${fmt(px)}: at or under the stop ${fmt(p.stop)}. ${st.paper ? "Paper: FLATTEN to record the exit." : "The SL-M stop at FYERS should be filling: check positions."}`, "bad");
+    if (p.target && px && px >= p.target) fire("tgt", `🎯 ${p.symbol} at ${fmt(px)}: target ${fmt(p.target)} reached. Nothing sold it: FLATTEN if you want out (cancel the stop first).`, "good");
+    if (t >= fb - 10 && t < fb) fire("fb10", `⏱ ${p.symbol}: flat-by ${st.config.flat_by} in ${fb - t} min.`, "warn");
+    if (t >= fb) fire("fb", `⏱ Flat-by time: close ${p.symbol} now. FYERS squares off INTRADAY from 3:05 PM with a charge.`, "bad");
+  }
+}
+
+/* ====================================================================== modal + FYERS */
+function openModal(title, html) { $("mTitle").textContent = title; $("mBody").innerHTML = html; $("modal").classList.add("open"); }
+function closeModal() { $("modal").classList.remove("open"); }
+function fyersModal() {
+  const f = S.status.fyers;
+  if (S.status.demo) return openModal("FYERS", `<div class="note">The demo replays saved data and never talks to FYERS. Start the dashboard without <span class="mono">--demo</span> to connect your account.</div>`);
+  openModal("FYERS CONNECTION", `
+    <div class="row" style="margin-bottom:12px"><span class="chip ${f.configured ? "ok" : "warn"}"><span class="dot"></span>${f.configured ? "APP " + esc(f.app_id) : "NO APP YET"}</span>
+      <span class="chip ${f.secret ? "ok" : "warn"}"><span class="dot"></span>${f.secret ? "SECRET SAVED" : "NO SECRET"}</span>
+      <span class="chip ${f.logged_in ? "ok" : "warn"}"><span class="dot"></span>${f.logged_in ? "LOGGED IN TODAY" : "NOT LOGGED IN"}</span></div>
+    <div class="note" style="margin-bottom:10px">1. Create an individual API app at <a href="https://myapi.fyers.in" target="_blank" rel="noopener">myapi.fyers.in</a> with this redirect URL:<br><span class="mono" style="color:var(--text)">${esc(f.redirect)}</span></div>
+    <div class="field"><label for="fApp">App ID</label><input id="fApp" value="${esc(f.app_id)}" placeholder="ABCD1234-100"></div>
+    <div class="field"><label for="fSec">App secret (saved only on this computer, in trader/fyers.secret)</label><input id="fSec" type="password" placeholder="${f.secret ? "saved: leave blank to keep it" : "paste it here, never in a chat"}" autocomplete="off"></div>
+    <div class="row"><button class="primary" id="fSave">SAVE</button>${f.configured ? '<a class="btn hot" href="/fyers/login" style="text-decoration:none">2. LOG IN WITH FYERS ↗</a>' : ""}</div>
+    <div class="note" style="margin-top:12px">Log in each trading morning: FYERS expires tokens at 6:30 AM IST. Your password and TOTP go into FYERS' own page only. With today's token, charts and quotes come from FYERS. Live orders also need a static IP registered with FYERS (SEBI, from April 2026).</div>`);
+  $("fSave").onclick = () => busy("fsave", $("fSave"), async () => {
+    await api("/api/fyers/setup", { app_id: $("fApp").value, secret: $("fSec").value, redirect: f.redirect });
+    S.status = await api("/api/status"); toast("Saved. Now log in with FYERS.", "good"); fyersModal();
+  });
+}
+async function resultsModal() {
+  const sym = S.symbol || "";
+  openModal("RESULTS · " + sym, '<div class="empty"><span class="spin"></span> Reading the quarterly numbers…</div>');
+  try {
+    const r = await api("/api/analyst?symbol=" + encodeURIComponent(sym));
+    const rows = (r.result && r.result.rows) || [];
+    const cr = (v) => v == null ? "—" : fmt(v / 1e7, 0);
+    let html = `<div class="note" style="margin-bottom:8px">${esc((r.result && r.result.entity) || r.ticker)} · ₹ crore except EPS · Yahoo fundamentals (unofficial)${S.status.demo ? " · demo company" : ""}</div>`;
+    html += `<table><thead><tr><th>Quarter</th><th>Revenue</th><th>Net profit</th><th>Op margin</th><th>EPS</th></tr></thead><tbody>` +
+      rows.slice(0, 6).map((q) => `<tr><td>${esc(q.fiscal || q.end)}</td><td>${cr(q.revenue)}</td><td>${cr(q.net_income)}</td><td>${q.revenue && q.operating_income != null ? fmt(100 * q.operating_income / q.revenue, 1) + "%" : "—"}</td><td>${fmt(q.eps_diluted)}</td></tr>`).join("") + "</tbody></table>";
+    if (r.note) html += `<div class="note" style="margin-top:8px">${esc(r.note)}</div>`;
+    if (r.filing && (r.filing.url || r.filing.link)) html += `<div class="note" style="margin-top:6px">${esc(r.filing.filed || "")} ${esc(r.filing.text || "")}<br><a href="${esc(r.filing.url || r.filing.link)}" target="_blank" rel="noopener">Latest NSE results filing ↗</a></div>`;
+    $("mBody").innerHTML = html;
+  } catch (e) { $("mBody").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+}
+
+/* ====================================================================== stream + boot */
+function connect() {
+  const es = new EventSource("/api/stream");
+  es.onmessage = (ev) => {
+    const d = JSON.parse(ev.data);
+    S.status = d.status; if (d.quotes && !d.quotes._error) Object.assign(S.quotes, d.quotes);
+    renderTop(); renderFavs(); renderHits(); checkAlerts();
+    if (S.symbol && Date.now() - S.lastChartAt > (S.status.demo ? 1500 : 20000)) loadChart();
+    else if (S.chart && !S.status.demo) renderChart();
+  };
+  es.onerror = () => { $("phase").innerHTML = '<span class="down pulse">●</span> RECONNECTING…'; };
+}
+async function boot() {
+  Chart.init(); bindLists(); bindOrderBox(); bindPos();
+  $("btnScan").onclick = (e) => doScan(e.currentTarget);
+  $("btnEntry").onclick = (e) => doEntry(e.currentTarget);
+  $("btnPlan").onclick = (e) => doPlan(e.currentTarget);
+  $("btnTM").onclick = (e) => doTM(e.currentTarget);
+  $("btnSize").onclick = (e) => doSize(e.currentTarget);
+  $("btnRisk").onclick = (e) => doRisk(e.currentTarget);
+  $("btnAnalyze").onclick = (e) => analyze(e.currentTarget);
+  $("btnResults").onclick = resultsModal;
+  $("btnNews").onclick = refreshNews;
+  $("btnFyers").onclick = fyersModal;
+  $("mClose").onclick = closeModal;
+  $("modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+  $("favForm").onsubmit = async (e) => { e.preventDefault(); const s = $("favInput").value.trim().toUpperCase(); if (!s) return;
+    const favs = (S.status.favorites || []).concat([s]); const r = await api("/api/favorites", { symbols: favs }); S.status.favorites = r.favorites; $("favInput").value = ""; renderFavs(); };
+  $("btnPlay").onclick = async () => { S.status = await api("/api/clock", { playing: !S.status.clock.playing }); renderTop(); };
+  $("speed").onchange = async (e) => { S.status = await api("/api/clock", { speed: Number(e.target.value) }); };
+  $("scrub").oninput = (e) => { S.scrubbing = true; const m = Number(e.target.value); $("scrubLbl").textContent = String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0"); };
+  $("scrub").onchange = async (e) => { const m = Number(e.target.value); S.status = await api("/api/clock", { time: Math.floor(m / 60) + ":" + (m % 60) }); S.scrubbing = false; renderTop(); loadChart(); refreshBook(); };
+  $("btnReset").onclick = async () => { S.status = await api("/api/demo/reset", {}); S.hits = []; S.sizing = null; S.fired.clear(); S.symbol = null; S.chart = null; Chart.set(null); renderHits(); await Promise.all([refreshState(), refreshBook()]); toast("Demo reset to 09:50.", "good"); };
+
+  S.status = await api("/api/status"); renderTop(); renderFavs();
+  const qs = new URLSearchParams(location.search);
+  if (qs.get("fyers") === "ok") toast("Logged in to FYERS for today. Charts and quotes now come from FYERS.", "good", 9000);
+  if (qs.get("fyers_error")) toast("FYERS login failed: " + qs.get("fyers_error"), "bad", 12000);
+  if (qs.has("fyers") || qs.has("fyers_error")) history.replaceState(null, "", "/");
+  try { const wl = await api("/api/watchlist"); S.hits = wl.hits || []; } catch (e) { }
+  renderHits();
+  await Promise.all([refreshState(), refreshBook()]);
+  const first = S.symbol || (S.hits[0] && S.hits[0].symbol) || (S.status.favorites || [])[0];
+  if (first) selectSymbol(first);
+  connect(); refreshNews();
+  setInterval(refreshBook, 5000);
+  setInterval(refreshNews, 180000);
+}
+boot();
+</script>
+</body>
+</html>

@@ -2,16 +2,16 @@
 
 10 Claude skills for day trading on NSE: scan the market's charts, track breaking news and NSE filings, time every entry and exit, and replay every outcome before you risk a rupee.
 
-Free, MIT, no signup, no API key for the data. The tools are plain Python
-that read free public data: Yahoo Finance charts for NSE shares (`.NS`),
-NSE's own equity list and filing feeds. Orders go through Zerodha's Kite MCP
-server, only after your yes.
+Free, MIT, no signup. The tools are plain Python that read free data: FYERS'
+official NSE bars and quotes once you log in to FYERS each morning (free API),
+or Yahoo Finance charts for NSE shares (`.NS`) without it, plus NSE's own
+equity list and filing feeds. Orders go to FYERS, only after your yes. And a
+**live dashboard** puts the whole day on one screen.
 
 This is a fork of [Jake Schincariol's Day Trader skill](https://github.com/Jakeschincariol/day-trader-skill)
 (the Trader skill v2, built for the US market), moved to India: the NSE clock
 and holidays, NSE symbols, rupees, NSE's price ticks, NSE filings instead of
-the SEC, and Zerodha Kite instead of Alpaca. The US-only Pelosi tracker is
-gone.
+the SEC, and FYERS instead of Alpaca. The US-only Pelosi tracker is gone.
 
 One scans the market for setups. Another tracks breaking news and NSE filings
 on every stock you watch. One watches a setup bar by bar and tells you the
@@ -34,9 +34,10 @@ an order on its own. Paper trading is the default.
 | Money | dollars | rupees (₹), `_inr` config keys, crore in the analyst |
 | Prices | to the cent | stops and targets rounded onto NSE's tick (₹0.01 / 0.05 / 0.10 / 0.50 / 1 / 5 by price band) |
 | Filings | SEC EDGAR 8-Ks, XBRL facts | NSE announcements and results feeds; Yahoo fundamentals for `.NS` |
-| Broker | Alpaca (paper account), IBKR | Zerodha Kite MCP. Kite has no paper account, so paper mode records pretend fills |
+| Broker | Alpaca (paper account), IBKR | FYERS API v3 (`ticket.py place` after your yes). FYERS has no paper account, so paper mode records pretend fills |
+| Data | Yahoo | FYERS' official bars and quotes after the morning login (free); Yahoo without it |
 | Bracket | one bracket order at the broker | entry first, then the stop-loss (SL-M) as its own ticket; the target is watched by alerts |
-| Flat by | 3:55 PM | 3:15 PM (Zerodha squares off MIS from about 3:20 PM) |
+| Flat by | 3:55 PM | 3:00 PM, last entry 2:45 PM (FYERS squares off INTRADAY from 3:05 PM for F&O stocks, 3:20 PM for the rest) |
 | Pelosi tracker | Congress's trade filings | removed (no Indian equivalent) |
 
 ## Install
@@ -75,6 +76,32 @@ The tools need Python 3.8 or newer. Nothing to pip install. Start with
 list of symbols and company names, which the news and analyst skills use to
 match NSE filings to your symbols.
 
+## The dashboard
+
+A futuristic, local trading screen over the same tools: the NSE session
+timeline, the scanner's breakouts, favourites with live sparklines, a
+candlestick chart with the opening range, entry, stop and target drawn on it
+and the **Time Machine's probability cone** projected forward, the trade
+pipeline (scan, entry, plan, replay, size, risk, yes, fill, exit) lighting up
+step by step, positions with live P&L and your daily limits, news and NSE
+filings, and a journal of every closed trade with win rate, R and an equity
+curve.
+
+```bash
+python3 dashboard/server.py --demo        # try it now: replays a real opening hour, no account needed
+python3 dashboard/server.py               # your own trader/ folder, FYERS or Yahoo data
+```
+
+It opens http://127.0.0.1:8765 and listens on your own computer only.
+Standard-library Python, no install, no outside scripts. **ANALYZE** runs
+entry, plan, time machine, size and the risk check for the symbol on screen
+and places nothing. An order needs the risk PASS, your typed "yes" (recorded
+word for word), then a second click; a live order also asks you to type the
+symbol. **CONNECT FYERS** saves your app id and secret on this computer only
+and logs you in on FYERS' own page; after that the charts and quotes are
+FYERS' and a live order goes through `ticket.py place`. See
+`dashboard/README.md`.
+
 ## The ten
 
 | command | job | what it does |
@@ -86,7 +113,7 @@ match NSE filings to your symbols.
 | `/trader-timemachine` | Time Machine | Replays every possible outcome of a trade before you risk a rupee: 10,000 simulated sessions plus every past time the setup fired. |
 | `/trader-risk` | Risk Manager | Checks every trade against your limits and stops anything over them. |
 | `/trader-budget` | Budget Manager | Sizes every position to your budget and your max loss per trade. |
-| `/trader-broker` | Order Executor | Sends approved orders to Zerodha Kite, paper trading by default, never without your yes. |
+| `/trader-broker` | Order Executor | Sends approved orders to FYERS, paper trading by default, never without your yes. Logs you in to FYERS each morning. |
 | `/trader-alerts` | Price Alerts | Rings when a price, a stop, the target or the opening bell hits. |
 | `/trader-analyst` | Earnings Analyst | Reads quarterly results and sums up what changed. |
 
@@ -98,7 +125,7 @@ what the last one wrote:
 ```
 scanner -> news -> entry -> exit -> timemachine -> budget -> risk -> broker   (one trade)
 broker protect: the stop-loss after the entry fills                         (right after)
-alerts: stop, target, flat by 3:15 PM                                         (while it is open)
+alerts: stop, target, flat by 3:00 PM                                         (while it is open)
 news / analyst                                                                (on a schedule)
 ```
 
@@ -112,25 +139,35 @@ A day, step by step:
    the first 5-minute close above the range.
 4. **`/trader-exit`** sets the plan before the entry: the stop at the range's
    midpoint, rounded down onto NSE's tick, the target at a multiple of the
-   risk, rounded up, and flat by 3:15 PM either way.
+   risk, rounded up, and flat by 3:00 PM either way.
 5. **`/trader-timemachine`** replays the rest of the day 10,000 times from the
    stock's own 5-minute bars of the last 60 days (seed 19, so anyone can
    repeat it), re-runs the same rule on those real sessions, and gives one
    honest verdict. Often it is "close to a coin flip": that is the point of
    looking before you risk a rupee.
 6. **`/trader-budget`** with a ₹1,00,000 account and a ₹500 max loss per
-   trade sizes the trade in whole shares and writes one intraday (MIS)
-   order.
+   trade sizes the trade in whole shares and writes one intraday
+   (INTRADAY) order.
 7. **`/trader-risk`** checks it against your limits: the max loss, the daily
    loss limit, trades per day, reward to risk, the entry window, position
-   size, cash, and what Kite accepts. PASS or BLOCK, with the reason.
+   size, cash, and what FYERS accepts. PASS or BLOCK, with the reason.
 8. **`/trader-broker`** shows you the ticket in plain words. You type yes for
    that exact order. In paper mode Claude records a pretend fill; live,
-   Claude calls Kite's `place_order` and Claude's own "Allow once / Deny"
-   card asks you one more time. Then `protect` puts the stop-loss in, as its
-   own ticket with its own yes.
-9. **`/trader-alerts`** rings on the stop, the target and at 3:15 PM to
+   Claude runs `ticket.py place` and Claude's own "Allow once / Deny" card
+   asks you one more time. Then `protect` puts the stop-loss in, as its own
+   ticket with its own yes.
+9. **`/trader-alerts`** rings on the stop, the target and at 3:00 PM to
    flatten whatever is still open.
+
+**FYERS, once:** open a FYERS account, create an individual API app at
+myapi.fyers.in (redirect URL `http://127.0.0.1:8765/fyers/callback` if you
+use the dashboard), then `python3 trader-broker/fyers_api.py setup --app-id
+YOUR-APP-ID --redirect <that URL>` and put the secret in `FYERS_SECRET` or
+`trader/fyers.secret` yourself, never in a chat. **Each trading morning:**
+`fyers_api.py login` (or the dashboard's button); FYERS expires tokens at 6:30
+AM. Live API orders also need a static IP registered with FYERS (SEBI, from 1
+April 2026). FYERS' free data plan allows 50 calls a minute, so a FYERS scan
+takes a watchlist of up to 40 stocks; the whole-market scan uses Yahoo.
 
 ## The tools
 
@@ -150,7 +187,9 @@ python3 trader-timemachine/timemachine.py run --write                  # 10,000 
 python3 trader-budget/size.py --write                                  # -> trader/orders.json
 python3 trader-risk/check.py                                           # PASS / BLOCK per order
 python3 trader-broker/ticket.py show                                   # the tickets, READY or not
+python3 trader-broker/ticket.py place --index 1                        # live: send the approved order to FYERS
 python3 trader-broker/ticket.py protect --symbol RELIANCE              # the stop-loss ticket
+python3 trader-broker/fyers_api.py login                               # each morning: today's FYERS token
 python3 trader-alerts/alerts.py add --from-plan                        # stop, target, flat by close
 python3 trader-alerts/alerts.py check                                  # rings what hit, once
 python3 trader-analyst/facts.py RELIANCE                               # quarters, growth, EPS, in crore
@@ -168,7 +207,11 @@ The NSE list and filing fixtures are hand-made in NSE's exact file shapes,
 and the analyst's fixtures are an invented company. They test the logic, not
 market facts. **Before trading on it, run each tool once against the live
 endpoints** (`scan.py universe`, `news.py --tickers RELIANCE`,
-`facts.py RELIANCE`) and check the output against NSE's website and Kite.
+`facts.py RELIANCE`, `fyers_api.py quote RELIANCE`) and check the output
+against NSE's website and the FYERS app. The FYERS calls are written from
+FYERS' API v3 documentation and tested against canned answers, not yet
+against a live account: place one paper day, then one 1-share live order,
+before trusting them.
 
 ## Fine print
 
@@ -181,24 +224,22 @@ adviser if you need advice.
 
 **No trade goes through until you say yes.** Only `/trader-broker` can lead to
 an order, and only after `/trader-risk` passes that exact order and you type
-yes for it in the chat. Set Kite's `place_order` tool to "Needs approval" in
-Claude (Customize, Connectors, tool permissions), never "Always allow", so
-Claude's own "Allow once / Deny" card is a second check. No F&O, margin
-(MTF), short selling or leverage unless you turn them on.
+yes for it in the chat (or "yes" in the dashboard). `ticket.py place` checks
+both itself. Never add it, or a FYERS MCP order tool, to an "Always allow"
+list, so Claude's own "Allow once / Deny" card is a second check. No F&O,
+margin (MTF), short selling or leverage unless you turn them on.
 
 **Paper first.** `"paper": true` is the default in `config.example.json`.
-Zerodha has no paper account, so in paper mode Claude never calls Kite and
-records pretend fills at the latest price. Your Zerodha login happens on
-Zerodha's own page; API keys live in your Claude Desktop config or
-environment variables, never in the chat. Zerodha's hosted Kite MCP server
-leaves out the order tools; placing real orders means running Zerodha's
-server yourself with your own Kite Connect app (check Zerodha's terms and
-pricing).
+FYERS has no paper account, so in paper mode nothing goes to FYERS and fills
+are pretend, at the latest price. Your FYERS login happens on FYERS' own
+page; the app secret lives in an environment variable or `trader/fyers.secret`
+on your computer, never in the chat.
 
-**Kite has no bracket order for shares.** The entry goes first; the stop-loss
-(an SL-M sell) follows as its own ticket once the entry fills, and the target
-is watched by `/trader-alerts`, not placed. Never leave two open sells for
-the same shares: both could fill and leave you short.
+**The entry goes alone.** The stop-loss (an SL-M sell) follows as its own
+ticket once the entry fills, and the target is watched by `/trader-alerts`,
+not placed. Before a flatten, `ticket.py cancel` takes the open stop out
+first: two open sells for the same shares could both fill and leave you
+short.
 
 **The Time Machine is a simulation, not a prediction.** It is built from the
 stock's own last 60 days of 5-minute bars. The future can do things those 60
@@ -213,12 +254,12 @@ loss shown is the loss at the stop price.
 official API: they can lag, change or rate-limit you. NSE's archive files and
 RSS feeds can change shape or block automated requests. The scanner and the
 entry timer read 1-minute or 5-minute bars, not every tick. Check anything
-that matters against Kite before you act on it.
+that matters against the FYERS app before you act on it.
 
 **Price ticks.** NSE's tick depends on the stock's price band (from April
 2025: ₹0.01 under ₹250, ₹0.05 to ₹1,000, ₹0.10 to ₹5,000, ₹0.50 to ₹10,000,
 ₹1 to ₹20,000, ₹5 above), set from a reference price and reviewed by NSE. If
-Kite rejects a price for its tick, set `"tick_size"` in your config.
+FYERS rejects a price for its tick, set `"tick_size"` in your config.
 
 **Charges and taxes.** Every trade pays brokerage, STT, exchange charges,
 SEBI fees, GST and stamp duty; small intraday moves can be eaten by them.
@@ -235,9 +276,10 @@ trader-exit/        SKILL.md, exit.py
 trader-timemachine/ SKILL.md, timemachine.py
 trader-risk/        SKILL.md, check.py
 trader-budget/      SKILL.md, size.py, config.example.json, targets.example.json
-trader-broker/      SKILL.md, ticket.py, claude_desktop_config.example.json
+trader-broker/      SKILL.md, ticket.py, fyers_api.py, claude_desktop_config.example.json
 trader-alerts/      SKILL.md, alerts.py, alerts.example.json
 trader-analyst/     SKILL.md, facts.py, metrics.example.json
+dashboard/          server.py, index.html, README.md: the local trading screen
 tests/              unittest suite + offline fixtures
 ```
 

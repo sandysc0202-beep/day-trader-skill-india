@@ -1,0 +1,85 @@
+# The dashboard
+
+A local trading screen over the pack's own tools. Standard-library Python and
+one HTML page: nothing to install, no outside scripts, and it listens on
+`127.0.0.1` only.
+
+```bash
+python3 dashboard/server.py --demo                     # replay a real opening hour, no account needed
+python3 dashboard/server.py                            # live: trader/ in the folder you run it from
+python3 dashboard/server.py --workdir ~/trading --port 8765 --no-browser
+```
+
+Then open http://127.0.0.1:8765 (it opens by itself unless `--no-browser`).
+
+## What is on the screen
+
+| panel | what | from |
+| --- | --- | --- |
+| Session bar | IST clock, the NSE session from 9:15 to 3:30 with the opening range, 9:30, last entry and flat-by marked | trader-alerts' NSE calendar, your config |
+| 01 Scanner | opening-range breakouts: the whole market (Yahoo) or your favourites (FYERS when logged in) | `scan.py orb` |
+| 02 Favourites | your symbols with live prices and sparklines (`trader/favorites.txt`) | FYERS quotes, or Yahoo |
+| Chart | 5-minute candles, the opening range, entry, stop and target, and the Time Machine's cone (5 to 95 % and 25 to 75 % of 10,000 replays, and the median) | the chart data, `trader/plan.json`, `trader/timemachine.json` |
+| Pipeline | scan, entry, plan, replay, size, risk, yes, fill, exit: what is done for the symbol on screen | the files in `trader/` |
+| 03 Entry & Plan | waiting / triggered and why; entry, stop, target, R, flat-by; re-plan with another stop or target | `entry.py check`, `exit.py plan` |
+| 04 Time Machine | target first, stop first or neither by flat-by, the past triggers, the verdict in plain words | `timemachine.py run` |
+| 05 Size, Risk, Order | shares and what bound them, PASS or BLOCK with every reason, the ticket, your yes, the fill | `size.py`, `check.py`, `ticket.py` |
+| 06 Positions & Limits | open positions with live P&L and where the price sits between stop and target, trades used today, open risk plus today's losses against your daily limit, today's log | `trader/portfolio.json`, `trader/state/broker.json`; FYERS positions when live |
+| 07 News & NSE filings | headlines and filings for your favourites, today's movers | `news.py` |
+| 08 Journal | every closed trade with P&L and R, win rate, net, the equity curve | the fill log |
+| RESULTS | the quarterly numbers for the symbol on screen | `facts.py` |
+
+**ANALYZE ▸** runs the entry check, and if it triggered, the plan, the Time
+Machine, the size and the risk check for the symbol on screen. It places
+nothing.
+
+Alerts show on screen: the stop, the target, ten minutes before flat-by and
+flat-by itself. An alert is information, never an order.
+
+## Orders
+
+The same gates as the skills, every time:
+
+1. trader-risk passed this exact order today.
+2. You type **yes** for this one order. It is recorded word for word, and
+   "sure", "ok" or "yes to all" are refused.
+3. A second click. In paper mode (`"paper": true`, the default) that records
+   a pretend fill at the latest price and nothing goes to FYERS. Live, you
+   also type the symbol, and then `ticket.py place` sends exactly the body
+   shown to FYERS.
+
+Positions get **FLATTEN** (a market sell ticket, through the risk check and
+your yes again) and, live, **STOP-LOSS** (the SL-M sell from `ticket.py
+protect`). Before a live flatten, cancel the open stop-loss (`ticket.py
+cancel --broker-id ID`, shown in the flatten message) so both sells cannot
+fill.
+
+## FYERS
+
+**CONNECT FYERS** in the top bar:
+
+1. Create an individual app at myapi.fyers.in with the redirect URL the
+   dialog shows (`http://127.0.0.1:8765/fyers/callback` by default).
+2. Paste the App ID and the secret into the dialog. They are saved on this
+   computer only (`trader/fyers.json`, `trader/fyers.secret`). Never paste
+   the secret into a chat.
+3. **LOG IN WITH FYERS** each trading morning: FYERS' own page, your password
+   and TOTP there. FYERS expires tokens at 6:30 AM IST.
+
+With today's token the chart, quotes and the favourites scan come from FYERS
+(official, free; 50 data calls a minute, so the dashboard refreshes quotes
+every 3 seconds in one call and charts every 20). Without it, Yahoo's
+delayed data. Live API orders also need a static IP registered with FYERS
+(SEBI's rule from 1 April 2026).
+
+## The demo
+
+`--demo` replays Monday 2026-10-19 from `tests/fixtures`: real 5-minute
+charts of 234 US stocks moved onto the NSE clock (real prices, synthetic
+times), the TSLA trade the tests use, sample news and an invented company's
+results. The saved charts cover 9:15 to 10:45, so the replay clock runs
+there: play, pause, change the speed or drag it. Its files live in
+`./trader-demo` (RESET clears them). The Time Machine has 60 days of bars for
+TSLA only in the demo.
+
+Education and tooling, not financial advice.

@@ -312,7 +312,7 @@ class Exits(unittest.TestCase):
         full = {"orders": [placed("TSLA"), placed("AMD"), placed("NVDA")] +
                           [placed("T%d" % i, max_loss=1) for i in range(6)] +
                           [placed("TSLA", side="sell", kind="exit", max_loss=None)]}
-        c = cfg(blocked=["TSLA"], max_order_usd=100, max_daily_loss_usd=50)
+        c = cfg(blocked=["TSLA"], max_order_inr=100, max_daily_loss_inr=50)
         res = check.check([self.SELL], c, portfolio=self.PF, state=full, now=at("2026-10-19 15:43"))
         r = res["results"][0]
         self.assertEqual((r["verdict"], r["kind"]), ("PASS", "exit"), r["reasons"])

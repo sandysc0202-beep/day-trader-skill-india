@@ -9,26 +9,27 @@ from _load import load, ROOT, FIX
 
 size = load("trader-budget", "size")
 
-CFG = os.path.join(ROOT, "trader-budget", "config.example.json")
+EXAMPLE_CFG = os.path.join(ROOT, "trader-budget", "config.example.json")
+CFG = os.path.join(FIX, "trader-budget", "config-reel.json")   # the upstream reel's small account, in rupees
 PLAN = os.path.join(FIX, "trader-budget", "plan-tsla.json")
-TARGETS = os.path.join(ROOT, "trader-budget", "targets.example.json")
+TARGETS = os.path.join(FIX, "trader-budget", "targets-berkshire.json")   # upstream's weights, as test data
+EXAMPLE_TARGETS = os.path.join(ROOT, "trader-budget", "targets.example.json")
 TOP5 = os.path.join(FIX, "trader-budget", "berkshire-q2-2026-top5.json")
 NOW = "2026-10-19 10:00"
 TODAY = "2026-10-19"
 REEL_V1 = {"AAPL": 1250, "AXP": 1119, "GOOGL": 823, "KO": 708, "BAC": 600}
 PRICES = {"AAPL": 341.27, "AXP": 309.84, "GOOGL": 353.78, "KO": 90.11, "BAC": 53.96}
-# the contract's v2 config, key for key
+# the India contract's config, key for key: config.example.json and the code's defaults agree
 CONTRACT_CFG = {
-    "budget": 5000, "cash_buffer_pct": 10, "max_position_pct": 75, "max_order_usd": 4000, "min_order_usd": 5,
-    "max_loss_per_trade_usd": 50, "max_daily_loss_usd": 150, "max_trades_per_day": 3, "max_orders_per_day": 10,
+    "budget": 100000, "cash_buffer_pct": 10, "max_position_pct": 75, "max_order_inr": 50000, "min_order_inr": 100,
+    "max_loss_per_trade_inr": 500, "max_daily_loss_inr": 1500, "max_trades_per_day": 3, "max_orders_per_day": 10,
     "min_reward_risk": 1.0, "require_stop": True,
-    "no_entries_before": "09:30", "no_entries_after": "15:15", "flat_by": "15:40",
-    "fractional": False, "broker": "alpaca", "paper": True, "blocked": [],
+    "no_entries_before": "09:30", "no_entries_after": "15:00", "flat_by": "15:15",
+    "fractional": False, "tick_size": None, "broker": "zerodha", "paper": True, "blocked": [],
     "allow_options": False, "allow_margin": False, "allow_short": False, "pdt_guard": False,
-    "sec_user_agent": "Your Name you@example.com",
 }
-# v1's rules, for the weights mode tests
-V1 = {"budget": 5000, "cash_buffer_pct": 10, "max_position_pct": 25, "max_order_usd": 2000, "min_order_usd": 5,
+# v1's rules, for the weights mode tests (fractional: a rupee split, no orders without prices)
+V1 = {"budget": 5000, "cash_buffer_pct": 10, "max_position_pct": 25, "max_order_inr": 2000, "min_order_inr": 5,
       "fractional": True, "paper": True, "blocked": []}
 
 
@@ -58,7 +59,7 @@ def rows(path):
 
 
 def dollars(result):
-    return {p["ticker"]: p["dollars"] for p in result["positions"]}
+    return {p["ticker"]: p["rupees"] for p in result["positions"]}
 
 
 def run(argv):
@@ -77,8 +78,18 @@ class TheReel(unittest.TestCase):
     """₹5,000, 10% buffer, ₹50 max loss, TSLA risk 5.86 -> 8 shares, ₹2,913.44, max loss ₹46.88."""
 
     def test_config_example_is_the_contract(self):
-        with open(CFG) as fh:
+        with open(EXAMPLE_CFG) as fh:
             self.assertEqual(json.load(fh), CONTRACT_CFG)
+        self.assertEqual({k: v for k, v in size.DEFAULTS.items() if k != "budget"},
+                         {k: v for k, v in CONTRACT_CFG.items() if k != "budget"})
+
+    def test_the_example_targets_split_into_whole_shares(self):
+        prices = {"RELIANCE": 1412.4, "HDFCBANK": 988.15, "INFY": 1489.6, "TCS": 3045.0, "ITC": 412.35}
+        r = size.size(rows(EXAMPLE_TARGETS), cfg(budget=100000, max_position_pct=75), prices=prices)
+        self.assertTrue(r["whole_shares"])
+        orders = size.orders_from(r)
+        self.assertEqual([o["symbol"] for o in orders], ["RELIANCE", "HDFCBANK", "INFY", "TCS", "ITC"])
+        self.assertTrue(all(o["product"] == "CNC" and "notional" not in o for o in orders))
 
     def test_tsla_is_8_shares_bound_by_the_max_loss(self):
         s = size.size_trade(plan(), cfg(), today=TODAY)
@@ -98,10 +109,10 @@ class TheReel(unittest.TestCase):
         o = size.bracket_order(size.size_trade(plan(), cfg(), today=TODAY))
         why = o.pop("why")
         self.assertEqual(o, {
-            "symbol": "TSLA", "side": "buy", "qty": "8", "type": "market", "time_in_force": "day",
+            "symbol": "TSLA", "side": "buy", "qty": "8", "type": "market", "time_in_force": "day", "product": "MIS",
             "order_class": "bracket", "take_profit_limit_price": "370.04", "stop_loss_stop_price": "358.32",
             "plan": {"entry": 364.18, "stop": 358.32, "target": 370.04, "risk_per_share": 5.86,
-                     "max_loss": 46.88, "setup": "orb", "entry_time": "10:00 AM", "flat_by": "15:40"}})
+                     "max_loss": 46.88, "setup": "orb", "entry_time": "10:00 AM", "flat_by": "15:15"}})
         self.assertIn("bound by your ₹50 max loss", why)
         self.assertIn("₹46.88", why)
 
@@ -162,12 +173,12 @@ class PlanRules(unittest.TestCase):
             self.assertFalse(os.path.exists(out))
 
     def test_each_limit_can_bind(self):
-        self.assertEqual(size.size_trade(plan(), cfg(max_order_usd=1000), today=TODAY)["bound_by"], "max order")
+        self.assertEqual(size.size_trade(plan(), cfg(max_order_inr=1000), today=TODAY)["bound_by"], "max order")
         s = size.size_trade(plan(), cfg(max_position_pct=20), today=TODAY)
         self.assertEqual((s["qty"], s["bound_by"]), (2, "position cap"))
         s = size.size_trade(plan(), cfg(), cash=1200, today=TODAY)
         self.assertEqual((s["qty"], s["bound_by"], s["cash_available"]), (1, "cash", 700))
-        s = size.size_trade(plan(), cfg(max_loss_per_trade_usd=100), today=TODAY)
+        s = size.size_trade(plan(), cfg(max_loss_per_trade_inr=100), today=TODAY)
         self.assertEqual((s["qty"], s["bound_by"]), (10, "position cap"))
 
     def test_a_fresh_higher_price_means_a_bigger_risk(self):
@@ -225,7 +236,7 @@ class PlanRules(unittest.TestCase):
 
     def test_under_the_minimum_order(self):
         cheap = plan(symbol="ABC", entry=4.0, stop=3.0, target=5.0)
-        s = size.size_trade(cheap, cfg(max_loss_per_trade_usd=1), today=TODAY)
+        s = size.size_trade(cheap, cfg(max_loss_per_trade_inr=1), today=TODAY)
         self.assertEqual(s["qty"], 1)
         self.assertIn("under your ₹5 minimum order", s["refusal"])
         self.assertIsNone(size.bracket_order(s))
@@ -276,16 +287,16 @@ class WeightsMode(unittest.TestCase):
         for t, v in dollars(r).items():
             self.assertLessEqual(abs(v - REEL_V1[t]), 1.0, t)
 
-    def test_orders_are_place_stock_order_shaped(self):
-        r = size.size(rows(TOP5), v1())
+    def test_orders_are_whole_share_cnc_buys(self):
+        self.assertEqual(size.orders_from(size.size(rows(TOP5), v1())), [])     # no prices: no orders
+        r = size.size(rows(TOP5), v1(fractional=False), prices=PRICES)
         orders = size.orders_from(r, "a 13F")
-        self.assertEqual(orders[0], {"symbol": "AAPL", "side": "buy", "notional": "1250", "type": "market",
-                                     "time_in_force": "day", "why": orders[0]["why"]})
+        self.assertEqual(orders[0], {"symbol": "AAPL", "side": "buy", "qty": "3", "type": "market",
+                                     "time_in_force": "day", "product": "CNC", "why": orders[0]["why"]})
         self.assertIn("capped at 25%", orders[0]["why"])
         for o in orders:
-            self.assertIsInstance(o["notional"], str)
-            self.assertNotIn("qty", o)
-        self.assertEqual([o["notional"] for o in orders], ["1250", "1119", "823", "708", "600"])
+            self.assertNotIn("notional", o)
+            self.assertEqual(o["qty"], str(int(o["qty"])))
 
     def test_cents_mode_keeps_the_total(self):
         r = size.size(rows(TOP5), v1(), cents=True)
@@ -293,11 +304,11 @@ class WeightsMode(unittest.TestCase):
         self.assertEqual(d["AAPL"], 1250)
         self.assertAlmostEqual(sum(d.values()), 4500, places=2)
         self.assertAlmostEqual(d["AXP"], 1118.13, places=2)
-        self.assertEqual(size.orders_from(r)[1]["notional"], "1118.13")
+        self.assertEqual(size.orders_from(r), [])        # a rupee split: orders need whole shares and prices
 
     def test_cap_redistributes_until_nobody_is_over(self):
         w = size.parse_weights({"A": 60, "B": 30, "C": 10})
-        r = size.size(w, {"budget": 1000, "cash_buffer_pct": 0, "max_position_pct": 40, "min_order_usd": 1})
+        r = size.size(w, {"budget": 1000, "cash_buffer_pct": 0, "max_position_pct": 40, "min_order_inr": 1})
         self.assertEqual(dollars(r), {"A": 400, "B": 400, "C": 200})
         self.assertEqual(sorted(p["ticker"] for p in r["positions"] if p["capped"]), ["A", "B"])
 
@@ -310,7 +321,7 @@ class WeightsMode(unittest.TestCase):
 
     def test_slices_under_the_minimum_are_dropped_and_shared_out(self):
         w = size.parse_weights({"A": 90, "B": 7, "C": 3})
-        r = size.size(w, {"budget": 100, "cash_buffer_pct": 10, "max_position_pct": 100, "min_order_usd": 5})
+        r = size.size(w, {"budget": 100, "cash_buffer_pct": 10, "max_position_pct": 100, "min_order_inr": 5})
         self.assertNotIn("C", dollars(r))
         self.assertEqual(sum(dollars(r).values()), 90)
         self.assertTrue(all(v >= 5 for v in dollars(r).values()))
@@ -337,8 +348,8 @@ class WeightsMode(unittest.TestCase):
         self.assertTrue(r["whole_shares"])
         for p in r["positions"]:
             self.assertEqual(p["shares"], int(p["shares"]))
-            self.assertAlmostEqual(p["dollars"], p["shares"] * PRICES[p["ticker"]], places=2)
-            self.assertLessEqual(p["dollars"], 1250)
+            self.assertAlmostEqual(p["rupees"], p["shares"] * PRICES[p["ticker"]], places=2)
+            self.assertLessEqual(p["rupees"], 1250)
         self.assertAlmostEqual(r["invested"] + r["idle"], 4500, places=2)
         self.assertLess(r["idle"], min(PRICES.values()) * 2)
         orders = size.orders_from(r)
@@ -357,12 +368,20 @@ class WeightsMode(unittest.TestCase):
                 json.dump(v1(), fh)
             out = os.path.join(d, "trader", "orders.json")
             code, text, _ = run(["--targets", TARGETS, "--config", c, "--write", out])
-            self.assertEqual(code, 0)
             self.assertIn("left idle", text)
+            self.assertIn("No orders: NSE trades whole shares", text)
+            self.assertFalse(os.path.exists(out))
+            pp = os.path.join(d, "prices.json")
+            with open(pp, "w") as fh:
+                json.dump({"prices": PRICES}, fh)
+            code, text, _ = run(["--targets", TARGETS, "--config", c, "--prices", pp, "--whole-shares",
+                                 "--write", out])
+            self.assertEqual(code, 0)
             self.assertIn("require_stop", text)
             with open(out) as fh:
                 doc = json.load(fh)
             self.assertEqual([o["symbol"] for o in doc["orders"]], ["AAPL", "AXP", "GOOGL", "KO", "BAC"])
+            self.assertTrue(all(o["product"] == "CNC" for o in doc["orders"]))
             code, text, _ = run(["--targets", TARGETS, "--config", c, "--json"])
             self.assertEqual(json.loads(text)["result"]["idle"], 0)
             code, _, err = run(["--targets", "/nonexistent/targets.json", "--config", c])

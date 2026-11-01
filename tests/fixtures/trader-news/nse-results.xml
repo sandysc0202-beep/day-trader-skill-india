@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hand-made in the shape of NSE's Financial_Results.xml feed. Invented test data. -->
+<rss version="2.0">
+  <channel>
+    <title>NSE News - Latest Financial Results</title>
+    <link>https://www.nseindia.com/companies-listing/corporate-filings-financial-results</link>
+    <description>National Stock Exchange - Financial Results</description>
+    <item>
+      <title>Infosys Limited</title>
+      <link>https://nsearchives.nseindia.com/corporate/xbrl/INFY_Q1FY27_results.xml</link>
+      <description>Quarterly, Unaudited, Consolidated, Ind-AS, for the period ended 30-Jun-2026</description>
+      <pubDate>16-Jul-2026 16:15:28</pubDate>
+    </item>
+  </channel>
+</rss>

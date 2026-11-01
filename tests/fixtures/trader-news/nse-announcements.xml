@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hand-made in the shape of NSE's Online_announcements.xml feed (title = company, pubDate in IST).
+     The companies are real NSE names; the filings are invented test data. -->
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <atom:link href="https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml" rel="self" type="application/rss+xml"/>
+    <title>NSE News - Latest Corporate Announcements</title>
+    <link>https://www.nseindia.com/companies-listing/corporate-filings-announcements</link>
+    <description>National Stock Exchange - Corporate Announcements</description>
+    <language>en-us</language>
+    <lastBuildDate>Tue, 13 Oct 2026 19:10:02 +0530</lastBuildDate>
+    <ttl>5</ttl>
+    <item>
+      <title>Reliance Industries Limited</title>
+      <link>https://nsearchives.nseindia.com/corporate/RELIANCE_13102026180511_Intimation.pdf</link>
+      <description>Reliance Industries Limited has informed the Exchange about the Outcome of Board Meeting held on October 13, 2026. |SUBJECT: Outcome of Board Meeting</description>
+      <pubDate>13-Oct-2026 18:05:11</pubDate>
+    </item>
+    <item>
+      <title>Infosys Limited</title>
+      <link>https://nsearchives.nseindia.com/corporate/INFY_13102026173002_AnalystMeet.pdf</link>
+      <description>Infosys Limited has informed the Exchange about the schedule of an analyst and institutional investor meet. |SUBJECT: Analysts/Institutional Investor Meet/Con. Call Updates</description>
+      <pubDate>13-Oct-2026 17:30:02</pubDate>
+    </item>
+    <item>
+      <title>MAHINDRA &amp; MAHINDRA LTD.</title>
+      <link>https://nsearchives.nseindia.com/corporate/MM_13102026160944_Credit.pdf</link>
+      <description>Mahindra &amp; Mahindra Limited has informed the Exchange about Credit Rating. |SUBJECT: Credit Rating</description>
+      <pubDate>13-Oct-2026 16:09:44</pubDate>
+    </item>
+    <item>
+      <title>Reliance Industrial Infrastructure Limited</title>
+      <link>https://nsearchives.nseindia.com/corporate/RIIL_13102026150000_Newspaper.pdf</link>
+      <description>Copy of newspaper publication. |SUBJECT: Copy of Newspaper Publication</description>
+      <pubDate>13-Oct-2026 15:00:00</pubDate>
+    </item>
+  </channel>
+</rss>

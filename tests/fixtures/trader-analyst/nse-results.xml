@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hand-made in the shape of NSE's Financial_Results.xml. Demo Industries is invented test data. -->
+<rss version="2.0">
+  <channel>
+    <title>NSE News - Latest Financial Results</title>
+    <item>
+      <title>DEMO INDUSTRIES LTD.</title>
+      <link>https://nsearchives.nseindia.com/corporate/xbrl/DEMO_Q1FY27.xml</link>
+      <description>Quarterly, Unaudited, Consolidated, Ind-AS, for the period ended 30-Jun-2026</description>
+      <pubDate>18-Jul-2026 16:02:10</pubDate>
+    </item>
+    <item>
+      <title>Demo Industries Limited</title>
+      <link>https://nsearchives.nseindia.com/corporate/xbrl/DEMO_Q2FY27.xml</link>
+      <description>Quarterly, Unaudited, Consolidated, Ind-AS, for the period ended 30-Sep-2026</description>
+      <pubDate>17-Oct-2026 15:47:33</pubDate>
+    </item>
+  </channel>
+</rss>

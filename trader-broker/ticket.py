@@ -164,7 +164,7 @@ def tool_input(order):
 def _money(v):
     f = float(v)
     s = "{:,.2f}".format(f)
-    return "$" + (s[:-3] if s.endswith(".00") else s)
+    return "₹" + (s[:-3] if s.endswith(".00") else s)
 
 
 def _p(v):
@@ -234,8 +234,8 @@ def plain_parts(order):
 
 
 def plain(order):
-    """BUY $1,250 of AAPL, market order, good for today
-    BUY 8 TSLA, market, good for today / stop-loss 358.32 / take-profit 370.04 / max loss about $46.88 ..."""
+    """BUY ₹1,250 of AAPL, market order, good for today
+    BUY 8 TSLA, market, good for today / stop-loss 358.32 / take-profit 370.04 / max loss about ₹46.88 ..."""
     return " / ".join(plain_parts(order))
 
 

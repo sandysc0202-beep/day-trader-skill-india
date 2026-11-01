@@ -178,7 +178,7 @@ def D(x, what="a number"):
     try:
         if isinstance(x, float):
             return Decimal(repr(x))
-        return Decimal(str(x).strip().lstrip("$").replace(",", ""))
+        return Decimal(str(x).strip().lstrip("$₹").replace("Rs.", "").replace("Rs", "").replace(",", ""))
     except (InvalidOperation, ValueError):
         raise PlanError("%s is not a number: %r" % (what, x))
 
@@ -194,7 +194,7 @@ def floor_cents(x):
 
 
 def money(x):
-    return "$%s" % format(D(x).quantize(CENT), ",f")
+    return "₹%s" % format(D(x).quantize(CENT), ",f")
 
 
 def num(x):
@@ -218,7 +218,7 @@ def parse_stop(text):
         return "or_mid", None
     if t in ("or-low", "or_low", "low"):
         return "or_low", None
-    m = re.match(r"^(price|pct|atr):\s*\$?([0-9][0-9,]*\.?[0-9]*)$", t)
+    m = re.match(r"^(price|pct|atr):\s*(?:\$|₹|Rs\.?)?\s*([0-9][0-9,]*\.?[0-9]*)$", t)
     if not m:
         raise PlanError("--stop is or-mid, or-low, price:X, pct:X or atr:K (got %r)" % text)
     kind, val = m.group(1), D(m.group(2), "--stop")
@@ -237,7 +237,7 @@ def parse_target(text):
         if r <= 0:
             raise PlanError("--target needs an R multiple above 0, like 1R or 2R")
         return "r", r
-    m = re.match(r"^price:\s*\$?([0-9][0-9,]*\.?[0-9]*)$", t.lower())
+    m = re.match(r"^price:\s*(?:\$|₹|Rs\.?)?\s*([0-9][0-9,]*\.?[0-9]*)$", t.lower())
     if m:
         return "price", D(m.group(1), "--target")
     raise PlanError("--target is 2R, 1R, 1.5R ... or price:X (got %r)" % text)
@@ -253,7 +253,7 @@ def compute(entry, stop_rule, stop_param, target_rule, target_param, or_high=Non
     """The stop, the target and the risk, in exact cents. Raises PlanError with the reason."""
     e = cents(entry)
     if e <= 0:
-        raise PlanError("the entry price must be above $0")
+        raise PlanError("the entry price must be above ₹0")
     detail = ""
     if stop_rule in ("or_mid", "or_low"):
         if or_high is None or or_low is None:
@@ -264,7 +264,7 @@ def compute(entry, stop_rule, stop_param, target_rule, target_param, or_high=Non
         if stop_rule == "or_mid":
             raw = (oh + ol) / 2
             label = "opening-range midpoint"
-            detail = "(%s + %s) / 2 = $%s" % (money(oh), money(ol), num(raw))
+            detail = "(%s + %s) / 2 = ₹%s" % (money(oh), money(ol), num(raw))
         else:
             raw, label = ol, "opening-range low"
     elif stop_rule == "price":
@@ -272,25 +272,25 @@ def compute(entry, stop_rule, stop_param, target_rule, target_param, or_high=Non
     elif stop_rule == "pct":
         raw = e * (1 - stop_param / 100)
         label = "%s%% under the entry" % num(stop_param)
-        detail = "%s x (1 - %s%%) = $%s" % (money(e), num(stop_param), num(raw))
+        detail = "%s x (1 - %s%%) = ₹%s" % (money(e), num(stop_param), num(raw))
     elif stop_rule == "atr":
         if atr is None:
             raise PlanError("an atr stop needs the session's bars")
         a = D(round(atr, 6))
         raw = e - stop_param * a
         label = "%s x ATR(%d) under the entry" % (num(stop_param), atr_bars)
-        detail = "ATR $%s over the %d bars to the entry%s" % (
+        detail = "ATR ₹%s over the %d bars to the entry%s" % (
             num(a.quantize(Decimal("0.0001"))), atr_bars, " (fewer than 14 so far)" if atr_bars < ATR_BARS else "")
     else:
         raise PlanError("unknown stop rule %r" % stop_rule)
     stop = floor_cents(raw)
     if stop != D(raw):
-        detail = (detail + ", rounded down" if detail else "$%s rounded down" % num(raw))
+        detail = (detail + ", rounded down" if detail else "₹%s rounded down" % num(raw))
     if stop >= e:
         raise PlanError("the stop %s (%s) is at or above the entry %s: a long's stop goes under the entry"
                         % (money(stop), label, money(e)))
     if stop <= 0:
-        raise PlanError("the stop works out to %s: pick a stop above $0" % money(stop))
+        raise PlanError("the stop works out to %s: pick a stop above ₹0" % money(stop))
     risk = e - stop
     floor_risk = e * MIN_RISK_PCT / 100
     if risk < floor_risk:

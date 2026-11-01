@@ -31,7 +31,7 @@ What blocks an order (every order):
 What blocks an entry (on top):
 
   blocked       a ticker on your "blocked" list
-  size          under min_order_usd, over max_order_usd
+  size          under min_order_inr, over max_order_inr
   position      the stock would be over max_position_pct of the account
   cash          the buy would dip into your cash buffer, or need margin
   duplicate     the same symbol and side twice in this batch, or already
@@ -39,13 +39,13 @@ What blocks an entry (on top):
   daily limit   max_orders_per_day orders placed today
   stop          no stop while "require_stop": true (a bracket stop_loss_stop_price
                 or the order's plan stop); a stop on the wrong side of the entry
-  loss          qty x (entry - stop) over max_loss_per_trade_usd. The entry is
+  loss          qty x (entry - stop) over max_loss_per_trade_inr. The entry is
                 the limit price for a limit order, else the HIGHER of the plan's
                 entry and a fresh price (under 15 minutes old), so a stale plan
                 cannot understate the risk
   reward:risk   (target - entry) / (entry - stop) under min_reward_risk
   daily loss    the max losses at the stops of today's entries plus this one
-                over max_daily_loss_usd (win or lose, each counts in full)
+                over max_daily_loss_inr (win or lose, each counts in full)
   trades        max_trades_per_day entries already placed today
   window        before no_entries_before or after no_entries_after (IST
                 time), or the market is closed (weekend, NSE holiday, outside
@@ -68,8 +68,8 @@ import re
 import sys
 
 DEFAULTS = {
-    "budget": None, "cash_buffer_pct": 10, "max_position_pct": 75, "max_order_usd": 4000,
-    "min_order_usd": 5, "max_loss_per_trade_usd": 50, "max_daily_loss_usd": 150, "max_trades_per_day": 3,
+    "budget": None, "cash_buffer_pct": 10, "max_position_pct": 75, "max_order_inr": 50000,
+    "min_order_inr": 100, "max_loss_per_trade_inr": 500, "max_daily_loss_inr": 1500, "max_trades_per_day": 3,
     "max_orders_per_day": 10, "min_reward_risk": 1.0, "require_stop": True,
     "no_entries_before": "09:30", "no_entries_after": "15:00", "flat_by": "15:15",
     "paper": True, "blocked": [], "allow_options": False, "allow_margin": False, "allow_short": False,
@@ -261,7 +261,7 @@ def _f(x):
 
 
 def money(x):
-    return "$" + "{:,.2f}".format(float(x)).replace(".00", "")
+    return "₹" + "{:,.2f}".format(float(x)).replace(".00", "")
 
 
 def _cent(x):
@@ -509,25 +509,25 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
         if sym in blocked:
             later.append("blocked: %s is on your blocked list" % sym)
         if value is not None:
-            if value < float(c.get("min_order_usd") or 0) - CENT:
+            if value < float(c.get("min_order_inr") or 0) - CENT:
                 later.append("size: %s is under your %s minimum order"
-                             % (money(value), money(c["min_order_usd"])))
-            if c.get("max_order_usd") and value > float(c["max_order_usd"]) + CENT:
+                             % (money(value), money(c["min_order_inr"])))
+            if c.get("max_order_inr") and value > float(c["max_order_inr"]) + CENT:
                 later.append("size: %s is over your %s max order"
-                             % (money(value), money(c["max_order_usd"])))
+                             % (money(value), money(c["max_order_inr"])))
 
         # account effects, simulated in order
         cash = acct["cash"]
         total = cash + sum(acct["values"].values())
-        buffer_usd = total * float(c.get("cash_buffer_pct") or 0) / 100.0
+        buffer_inr = total * float(c.get("cash_buffer_pct") or 0) / 100.0
         if value is not None and side == "buy" and kind == "entry":
             after_cash = cash - value
             if after_cash < -CENT and not c.get("allow_margin"):
                 later.append("cash: needs %s but only %s cash; that would be margin (borrowed money)"
                              % (money(value), money(cash)))
-            elif after_cash < buffer_usd - CENT:
+            elif after_cash < buffer_inr - CENT:
                 later.append("cash: leaves %s cash, under your %s%% buffer of %s"
-                             % (money(max(after_cash, 0)), _pct(c["cash_buffer_pct"]), money(buffer_usd)))
+                             % (money(max(after_cash, 0)), _pct(c["cash_buffer_pct"]), money(buffer_inr)))
             pos_after = held_value + value
             limit = total * float(c.get("max_position_pct") or 100) / 100.0
             if total > 0 and pos_after > limit + CENT:
@@ -573,7 +573,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                     risk_ps = risk_c / 100.0
                     shares = q if q is not None else ((value or 0) / ref)
                     max_loss = round(shares * risk_ps, 2)
-                    cap = _f(c.get("max_loss_per_trade_usd"))
+                    cap = _f(c.get("max_loss_per_trade_inr"))
                     if cap and max_loss > cap + CENT:
                         later.append("loss: %s shares x %s risk a share = %s at the stop, over your %s max loss "
                                      "per trade" % (_num(shares), _p(risk_ps), money(max_loss), money(cap)))
@@ -590,7 +590,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                     elif min_rr:
                         later.append("reward:risk: no target to measure it against (min_reward_risk %s)"
                                      % _num(min_rr))
-            daily = _f(c.get("max_daily_loss_usd"))
+            daily = _f(c.get("max_daily_loss_inr"))
             if daily and max_loss is not None:
                 used = loss_today + batch_loss
                 if used + max_loss > daily + CENT:
@@ -611,8 +611,8 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                             % (_p(ref), REF_WORDS.get(ref_from, ref_from), _p(stop),
                                _p(target) if target else "none", _p(risk_ps)))
                 info.append("max loss %s%s, reward:risk %s%s"
-                            % (money(max_loss), (" (limit %s)" % money(c["max_loss_per_trade_usd"]))
-                               if _f(c.get("max_loss_per_trade_usd")) else "",
+                            % (money(max_loss), (" (limit %s)" % money(c["max_loss_per_trade_inr"]))
+                               if _f(c.get("max_loss_per_trade_inr")) else "",
                                ("%.2f" % rr) if rr is not None else "n/a",
                                (" (min %s)" % _num(c["min_reward_risk"])) if _f(c.get("min_reward_risk")) else ""))
             if daily or cap_t:

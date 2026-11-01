@@ -44,7 +44,7 @@ an order on its own. Paper trading is the default.
 Paste this into Claude:
 
 ```
-https://github.com/OWNER/day-trader-skill-india
+https://github.com/sandysc0202-beep/day-trader-skill-india
 
 install skill
 ```
@@ -52,7 +52,7 @@ install skill
 Or as a plugin, in Claude Code:
 
 ```
-/plugin marketplace add OWNER/day-trader-skill-india
+/plugin marketplace add sandysc0202-beep/day-trader-skill-india
 /plugin install day-trader-skill-india@day-trader-skill-india
 ```
 
@@ -61,7 +61,7 @@ Claude Code namespaces plugin skills, so installed as a plugin they show up as
 you want plain `/trader-scanner`:
 
 ```bash
-git clone https://github.com/OWNER/day-trader-skill-india.git
+git clone https://github.com/sandysc0202-beep/day-trader-skill-india.git
 cp -r day-trader-skill-india/trader-* ~/.claude/skills/
 ```
 

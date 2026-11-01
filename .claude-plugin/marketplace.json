@@ -3,7 +3,7 @@
   "name": "day-trader-skill-india",
   "description": "The Day Trader skill pack for Claude, India edition: NSE, rupees, Zerodha Kite",
   "owner": {
-    "name": "OWNER"
+    "name": "sandysc0202-beep"
   },
   "plugins": [
     {
@@ -11,7 +11,7 @@
       "description": "Ten Claude skills for day trading on NSE: a chart scanner, a news and NSE filings monitor, an entry timer, an exit planner on NSE's tick, a time machine that replays 10,000 sessions, a risk manager, a budget manager, an order executor for Zerodha Kite (paper by default, never without your yes), price alerts and an earnings analyst.",
       "source": "./",
       "category": "productivity",
-      "homepage": "https://github.com/OWNER/day-trader-skill-india"
+      "homepage": "https://github.com/sandysc0202-beep/day-trader-skill-india"
     }
   ]
 }

@@ -3,11 +3,11 @@
   "description": "10 Claude skills for day trading on NSE: scan the market's charts, track breaking news and NSE filings, time every entry and exit, and replay every outcome before you risk a rupee.",
   "version": "2.0.0-in.1",
   "author": {
-    "name": "Jake Schincariol (original); India edition by OWNER",
+    "name": "Jake Schincariol (original); India edition by sandysc0202-beep",
     "url": "https://opusjake.ai"
   },
-  "homepage": "https://github.com/OWNER/day-trader-skill-india",
-  "repository": "https://github.com/OWNER/day-trader-skill-india",
+  "homepage": "https://github.com/sandysc0202-beep/day-trader-skill-india",
+  "repository": "https://github.com/sandysc0202-beep/day-trader-skill-india",
   "license": "MIT",
   "keywords": [
     "claude-code",

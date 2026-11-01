@@ -5,37 +5,42 @@
     {
       "symbol": "AAPL",
       "side": "buy",
-      "notional": "1250",
+      "qty": "3",
       "type": "market",
-      "time_in_force": "day"
+      "time_in_force": "day",
+      "product": "CNC"
     },
     {
       "symbol": "AXP",
       "side": "buy",
-      "notional": "1119",
+      "qty": "3",
       "type": "market",
-      "time_in_force": "day"
+      "time_in_force": "day",
+      "product": "CNC"
     },
     {
       "symbol": "GOOGL",
       "side": "buy",
-      "notional": "823",
+      "qty": "2",
       "type": "market",
-      "time_in_force": "day"
+      "time_in_force": "day",
+      "product": "CNC"
     },
     {
       "symbol": "KO",
       "side": "buy",
-      "notional": "708",
+      "qty": "7",
       "type": "market",
-      "time_in_force": "day"
+      "time_in_force": "day",
+      "product": "CNC"
     },
     {
       "symbol": "BAC",
       "side": "buy",
-      "notional": "600",
+      "qty": "11",
       "type": "market",
-      "time_in_force": "day"
+      "time_in_force": "day",
+      "product": "CNC"
     }
   ]
 }

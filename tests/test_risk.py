@@ -11,18 +11,19 @@ from _load import load, ROOT, FIX
 check = load("trader-risk", "check")
 ticket = load("trader-broker", "ticket")
 
-CFG_PATH = os.path.join(ROOT, "trader-budget", "config.example.json")
+CFG_PATH = os.path.join(FIX, "trader-budget", "config-reel.json")   # the upstream reel's small account
 TSLA_PATH = os.path.join(FIX, "trader-risk", "orders-tsla.json")
 V1_ORDERS_PATH = os.path.join(FIX, "trader-risk", "orders-reel.json")
 NOW = "2026-10-19 10:00"
 TODAY = "2026-10-19"
 V1_TODAY = "2026-10-13"
 PRICES = {"AAPL": 341.27, "AXP": 309.84, "GOOGL": 353.78, "KO": 90.11, "BAC": 53.96}
-QUOTE_TIME = datetime.datetime(2026, 10, 19, 14, 52, 13)   # Yahoo's TSLA quote 366.475, 10:37:13 IST
+QUOTE_TIME = datetime.datetime(2026, 10, 19, 5, 7, 13)   # Yahoo's TSLA quote 366.475, 10:37:13 IST
 # v1's rules with every day-trade check switched off: the long-term checks still hold
-V1 = {"budget": 5000, "cash_buffer_pct": 10, "max_position_pct": 25, "max_order_usd": 2000, "min_order_usd": 5,
+V1 = {"budget": 5000, "cash_buffer_pct": 10, "max_position_pct": 25, "max_order_inr": 2000, "min_order_inr": 5,
       "max_orders_per_day": 10, "require_stop": False, "no_entries_before": None, "no_entries_after": None,
-      "max_trades_per_day": 0, "max_daily_loss_usd": 0, "max_loss_per_trade_usd": 0, "min_reward_risk": 0}
+      "max_trades_per_day": 0, "max_daily_loss_inr": 0, "max_loss_per_trade_inr": 0, "min_reward_risk": 0,
+      "tick_size": 0.01}
 
 
 def at(text):
@@ -61,12 +62,14 @@ def v1_orders():
         return json.load(fh)["orders"]
 
 
-def buy(sym, usd):
-    return {"symbol": sym, "side": "buy", "notional": str(usd), "type": "market", "time_in_force": "day"}
+def buy(sym, qty, product="CNC"):
+    """A whole-share market buy: NSE trades whole shares and Kite takes a quantity, never a rupee amount."""
+    return {"symbol": sym, "side": "buy", "qty": str(qty), "type": "market", "time_in_force": "day",
+            "product": product}
 
 
 def placed(sym, side="buy", day=TODAY, max_loss=46.88, kind=None, status="placed"):
-    r = {"symbol": sym, "side": side, "status": status, "date": day, "at": day + "T10:05:00-04:00"}
+    r = {"symbol": sym, "side": side, "status": status, "date": day, "at": day + "T10:05:00+05:30"}
     if max_loss is not None:
         r["max_loss"] = max_loss
     if kind:
@@ -95,7 +98,7 @@ class TheReel(unittest.TestCase):
         self.assertEqual(r["warnings"], [])
         self.assertEqual((r["kind"], r["entry_ref"], r["stop"], r["target"]), ("entry", 364.18, 358.32, 370.04))
         self.assertEqual((r["risk_per_share"], r["max_loss"], r["reward_risk"]), (5.86, 46.88, 1.0))
-        self.assertEqual(r["value_usd"], 2913.44)
+        self.assertEqual(r["value_inr"], 2913.44)
         self.assertEqual(res["cash_after"], 2086.56)
         self.assertEqual(res["date"], TODAY)
         self.assertIs(res["paper"], True)
@@ -112,7 +115,8 @@ class TheReel(unittest.TestCase):
         self.assertEqual(check.fingerprint(dict(o, why="anything", plan={})), check.fingerprint(o))
         self.assertNotEqual(check.fingerprint(dict(o, qty="9")), check.fingerprint(o))
         self.assertNotEqual(check.fingerprint(dict(o, stop_loss_stop_price="358.00")), check.fingerprint(o))
-        self.assertEqual(check.ALPACA_FIELDS, ticket.ALPACA_FIELDS)
+        self.assertNotEqual(check.fingerprint(dict(o, product="CNC")), check.fingerprint(o))
+        self.assertEqual(check.ORDER_FIELDS, ticket.ORDER_FIELDS)
 
     def test_cli(self):
         with tempfile.TemporaryDirectory() as d:
@@ -224,15 +228,14 @@ class DayTradeChecks(unittest.TestCase):
         self.assertIn("trades: 0 entries placed today plus 3 passed earlier", why)
         self.assertIn("daily loss: ₹120 already at risk today plus ₹40 for this one = ₹160", why)
 
-    def test_entry_window_new_york_time(self):
+    def test_entry_window_india_time(self):
         cases = [("2026-10-19 09:29", "no new entries before 09:30 IST (it is 09:29)"),
                  ("2026-10-19 15:16", "no new entries after 15:15 IST (it is 15:16)"),
                  ("2026-10-19 07:45", "the market is closed (Mon 2026-10-19 07:45"),
                  ("2026-10-19 15:50", "the market is closed"),
                  ("2026-10-17 10:00", "the market is closed today (weekend"),
-                 ("2026-11-26 10:00", "the market is closed today (NYSE holiday: Thanksgiving Day"),
-                 ("2026-11-27 12:16", "no new entries after 12:15 IST"),
-                 ("2026-11-27 12:50", "the market is closed"),
+                 ("2026-10-20 10:00", "the market is closed today (NSE holiday: Dussehra"),
+                 ("2026-11-10 12:16", "the market is closed today (NSE holiday: Diwali Balipratipada"),
                  ("2026-11-02T03:55:00Z", "no new entries before 09:30 IST (it is 09:25)")]
         for now, want in cases:
             res = self.one(tsla(), now=now)
@@ -240,16 +243,15 @@ class DayTradeChecks(unittest.TestCase):
         for now in ("2026-10-19 09:30", "2026-10-19 15:15", "2026-11-27 12:15", "2026-11-02T04:30:00Z",
                     "2026-10-30T04:55:00Z", "2026-03-09T04:05:00Z"):
             self.assertEqual(verdicts(self.one(tsla(), now=now)), ["PASS"], now)
-        self.assertIn("early close", " ".join(self.one(tsla(), now="2026-11-27 12:15")["warnings"]))
         res = self.one(tsla(), now="2026-10-17 10:00", no_entries_before=None, no_entries_after=None)
         self.assertEqual(verdicts(res), ["PASS"])
         with self.assertRaises(check.RiskError):
             self.one(tsla(), no_entries_before="9.45am")
 
-    def test_the_window_uses_new_york_time_not_the_machine(self):
-        self.assertEqual(check.to_ist(at("2026-10-19 10:00")), datetime.datetime(2026, 10, 19, 10, 15))
-        self.assertEqual(at("2026-10-19 10:00"), datetime.datetime(2026, 10, 19, 14, 15))
-        self.assertEqual(at("2026-12-01 10:00"), datetime.datetime(2026, 12, 1, 15, 15))
+    def test_the_window_uses_india_time_not_the_machine(self):
+        self.assertEqual(check.to_ist(at("2026-10-19 10:00")), datetime.datetime(2026, 10, 19, 10, 0))
+        self.assertEqual(at("2026-10-19 10:00"), datetime.datetime(2026, 10, 19, 4, 30))
+        self.assertEqual(at("2026-12-01 10:00"), datetime.datetime(2026, 12, 1, 4, 30))   # no clock change
 
     def test_pdt_guard(self):
         def trade(day):
@@ -258,7 +260,7 @@ class DayTradeChecks(unittest.TestCase):
         st = {"orders": trade("2026-10-13") + trade("2026-10-14") + trade("2026-10-15")}
         self.assertEqual(verdicts(self.one(tsla())), ["PASS"])
         res = check.check([tsla()], cfg(pdt_guard=True), state=st, now=at(NOW))
-        self.assertIn("pdt: 3 day trades in the last 5 business days", reasons(res))
+        self.assertIn("pdt: 3 day trades in the last 5 trading days", reasons(res))
         self.assertEqual(verdicts(check.check([tsla()], cfg(), state=st, now=at(NOW))), ["PASS"])
         old = {"orders": trade("2026-10-12") + trade("2026-10-14") + trade("2026-10-15")}
         self.assertEqual(verdicts(check.check([tsla()], cfg(pdt_guard=True), state=old, now=at(NOW))), ["PASS"])
@@ -281,24 +283,24 @@ class DayTradeChecks(unittest.TestCase):
         self.assertIn("must be above the entry 364.18 for a sell", reasons(res))
 
     def test_bracket_format(self):
-        self.assertIn("whole-share qty", reasons(self.one(dict(tsla(qty=None), notional="2900"))))
-        self.assertIn("whole shares only", reasons(self.one(tsla(qty="8.5"))))
-        self.assertIn("time_in_force day or gtc", reasons(self.one(tsla(time_in_force="ioc"))))
-        self.assertEqual(verdicts(self.one(tsla(time_in_force="gtc"))), ["PASS"])
+        self.assertIn("not a rupee amount", reasons(self.one(dict(tsla(qty=None), notional="2900"))))
+        self.assertIn("NSE trades whole shares", reasons(self.one(tsla(qty="8.5"))))
+        self.assertIn("a bracket order needs time_in_force day", reasons(self.one(tsla(time_in_force="ioc"))))
+        self.assertIn("Kite takes day or ioc", reasons(self.one(tsla(time_in_force="gtc"))))
         o = tsla()
         o.pop("take_profit_limit_price")
         self.assertIn("needs both take_profit_limit_price and stop_loss_stop_price", reasons(self.one(o)))
         self.assertIn("needs a stop_loss_stop_price", reasons(self.one(dict(tsla(), stop_loss_stop_price=None,
                                                                             stop_loss_limit_price="357.00"))))
-        self.assertIn("as a string", warnings(self.one(tsla(stop_loss_stop_price=358.32))))
+        self.assertEqual(verdicts(self.one(tsla(stop_loss_stop_price=358.32))), ["PASS"])   # numbers are fine for Kite
 
-    def test_extended_hours(self):
+    def test_no_extended_hours(self):
         lim = {"symbol": "KO", "side": "buy", "qty": "1", "type": "limit", "limit_price": "90",
-               "time_in_force": "gtc", "extended_hours": True}
+               "time_in_force": "day", "extended_hours": True}
         res = check.check([lim], v1(), prices=PRICES, today=V1_TODAY)
-        self.assertEqual(verdicts(res), ["PASS"])
-        res = check.check([dict(lim, type="market", limit_price=None)], v1(), prices=PRICES, today=V1_TODAY)
-        self.assertIn("extended hours needs a limit order", reasons(res))
+        self.assertIn("no extended-hours session", reasons(res))
+        lim.pop("extended_hours")
+        self.assertEqual(verdicts(check.check([lim], v1(), prices=PRICES, today=V1_TODAY)), ["PASS"])
 
 
 class Exits(unittest.TestCase):
@@ -346,20 +348,20 @@ class Exits(unittest.TestCase):
 
 
 class V1Checks(unittest.TestCase):
-    """v1's long-term checks still hold (day-trade checks off)."""
+    """v1's long-term checks still hold (day-trade checks off), with whole-share CNC orders."""
 
     def one(self, order, **over):
         return check.check([order], v1(**over), prices=PRICES, today=V1_TODAY)["results"][0]
 
-    def test_the_five_buys_pass_on_a_fresh_5000_paper_account(self):
-        res = check.check(v1_orders(), v1(), today=V1_TODAY)
+    def test_the_five_buys_pass_on_a_fresh_5000_account(self):
+        res = check.check(v1_orders(), v1(), prices=PRICES, today=V1_TODAY)
         self.assertEqual(verdicts(res), ["PASS"] * 5)
-        self.assertEqual(res["cash_after"], 500)
-        self.assertEqual(res["results"][0]["value_usd"], 1250)
-        self.assertEqual(res["results"][0]["amount"], "₹1,250")
+        self.assertEqual(res["cash_after"], 1114.78)               # 5,000 - 3,885.22
+        self.assertEqual(res["results"][0]["value_inr"], 1023.81)  # 3 AAPL at 341.27
+        self.assertEqual(res["results"][0]["amount"], "3 shares")
 
     def test_a_sixth_buy_is_blocked_three_ways(self):
-        res = check.check(v1_orders() + [buy("AAPL", 100)], v1(), today=V1_TODAY)
+        res = check.check(v1_orders() + [buy("AAPL", 3)], v1(), prices=PRICES, today=V1_TODAY)
         self.assertEqual(verdicts(res), ["PASS"] * 5 + ["BLOCK"])
         why = reasons(res, 5)
         self.assertIn("cash:", why)
@@ -367,47 +369,65 @@ class V1Checks(unittest.TestCase):
         self.assertIn("duplicate:", why)
 
     def test_the_v2_config_blocks_buys_without_a_stop(self):
-        res = check.check(v1_orders(), cfg(), now=at(NOW))
+        res = check.check(v1_orders(), cfg(), prices=PRICES, now=at(NOW))
         self.assertEqual(verdicts(res)[0], "BLOCK")
         self.assertIn("stop: no stop", reasons(res))
 
     def test_max_and_min_order(self):
-        self.assertIn("over your ₹2,000 max order", " ".join(self.one(buy("KO", 2500), max_position_pct=100)["reasons"]))
-        self.assertIn("under your ₹5 minimum", " ".join(self.one(buy("KO", 2))["reasons"]))
+        self.assertIn("over your ₹2,000 max order", " ".join(self.one(buy("KO", 28), max_position_pct=100)["reasons"]))
+        self.assertIn("under your ₹100 minimum", " ".join(self.one(buy("KO", 1), min_order_inr=100)["reasons"]))
 
     def test_blocked_list(self):
-        r = self.one(buy("KO", 100), blocked=["KO"])
+        r = self.one(buy("KO", 1), blocked=["KO"])
         self.assertEqual(r["verdict"], "BLOCK")
         self.assertIn("blocked list", r["reasons"][0])
 
-    def test_options_off_unless_allowed(self):
-        opt = {"symbol": "BE270617C00100000", "side": "buy", "qty": "1", "type": "limit",
-               "limit_price": "12.50", "time_in_force": "day"}
-        r = self.one(opt)
+    def test_futures_and_options_off_unless_allowed(self):
+        opt = {"symbol": "NIFTY26NOV24500CE", "side": "buy", "qty": "75", "type": "limit",
+               "limit_price": "12.50", "time_in_force": "day", "product": "MIS"}
+        r = self.one(opt, max_order_inr=0, max_position_pct=100)
         self.assertEqual(r["verdict"], "BLOCK")
-        self.assertIn("option", " ".join(r["reasons"]))
-        r = self.one(opt, allow_options=True)
-        self.assertEqual(r["verdict"], "PASS")
+        self.assertIn("futures or options", " ".join(r["reasons"]))
+        r = self.one(opt, allow_options=True, max_order_inr=0, max_position_pct=100)
+        self.assertEqual(r["verdict"], "PASS", r["reasons"])
         self.assertTrue(r["warnings"])
+        self.assertIn("futures or options", " ".join(self.one(dict(opt, symbol="RELIANCE26NOVFUT"))["reasons"]))
 
-    def test_crypto_and_junk_symbols(self):
-        crypto = {"symbol": "BTC/USD", "side": "buy", "notional": "50", "type": "market", "time_in_force": "day"}
-        self.assertIn("stocks and ETFs only", " ".join(self.one(crypto)["reasons"]))
+    def test_nse_symbols_crypto_and_junk(self):
+        crypto = {"symbol": "BTC/USD", "side": "buy", "qty": "1", "type": "market", "time_in_force": "day"}
+        self.assertIn("NSE shares and ETFs only", " ".join(self.one(crypto)["reasons"]))
+        for good in ("M&M", "BAJAJ-AUTO", "3MINDIA", "RELIANCE"):
+            r = self.one({"symbol": good, "side": "buy", "qty": "1", "type": "limit", "limit_price": "10",
+                          "time_in_force": "day"})
+            self.assertNotIn("asset:", " ".join(r["reasons"]), good)
 
-    def test_format_rules(self):
-        both = dict(buy("KO", 100), qty="1")
-        self.assertIn("exactly one of qty or notional", " ".join(self.one(both)["reasons"]))
-        lim = dict(buy("KO", 100), type="limit", limit_price="90")
-        self.assertIn("market order with time_in_force day", " ".join(self.one(lim)["reasons"]))
+    def test_format_rules_for_kite(self):
+        def why(o):
+            return " ".join(self.one(o)["reasons"])
+        self.assertIn("not a rupee amount", why({"symbol": "KO", "side": "buy", "notional": "100", "type": "market",
+                                                  "time_in_force": "day"}))
+        self.assertIn("whole shares", why(dict(buy("KO", 1), qty="1.5")))
+        self.assertIn("no qty", why({"symbol": "KO", "side": "buy", "type": "market", "time_in_force": "day"}))
         nolimit = {"symbol": "KO", "side": "buy", "qty": "1", "type": "limit", "time_in_force": "day"}
-        self.assertIn("needs a limit_price", " ".join(self.one(nolimit)["reasons"]))
-        bad = {"symbol": "KO", "side": "hold", "notional": "100"}
-        self.assertIn("side must be buy or sell", " ".join(self.one(bad)["reasons"]))
+        self.assertIn("needs a limit_price", why(nolimit))
+        self.assertIn("Kite has no trailing-stop", why(dict(buy("KO", 1), type="trailing_stop", trail_percent="1")))
+        self.assertIn("Kite takes day or ioc", why(dict(buy("KO", 1), time_in_force="gtc")))
+        self.assertIn("MIS (intraday) or CNC", why(dict(buy("KO", 1), product="NRML")))
+        self.assertIn("NSE only", why(dict(buy("KO", 1), exchange="BSE")))
+        self.assertIn("side must be buy or sell", why({"symbol": "KO", "side": "hold", "qty": "1"}))
+        self.assertEqual(self.one(dict(buy("KO", 1), time_in_force="ioc"))["verdict"], "PASS")
 
-    def test_numbers_should_be_strings(self):
-        r = self.one({"symbol": "KO", "side": "buy", "notional": 100, "type": "market", "time_in_force": "day"})
+    def test_off_tick_prices_warn(self):
+        lim = {"symbol": "KO", "side": "buy", "qty": "1", "type": "limit", "limit_price": "364.18",
+               "time_in_force": "day", "product": "CNC"}
+        r = self.one(lim, tick_size=None, max_order_inr=0, max_position_pct=100)
         self.assertEqual(r["verdict"], "PASS")
-        self.assertIn("as a string", r["warnings"][0])
+        self.assertIn("not on NSE's 0.05 tick", " ".join(r["warnings"]))
+        self.assertNotIn("tick", " ".join(self.one(dict(lim, limit_price="364.15"), tick_size=None, max_order_inr=0,
+                                                   max_position_pct=100)["warnings"]))
+        self.assertEqual(check.nse_tick(99), 0.01)
+        self.assertEqual(check.nse_tick(1412.4), 0.10)
+        self.assertEqual(check.nse_tick(1412.4, 0.05), 0.05)
 
     def test_share_orders_need_a_price(self):
         q = {"symbol": "ZZZZ", "side": "buy", "qty": "2", "type": "market", "time_in_force": "day"}
@@ -415,15 +435,15 @@ class V1Checks(unittest.TestCase):
         q["symbol"] = "KO"
         r = self.one(q)
         self.assertEqual(r["verdict"], "PASS")
-        self.assertAlmostEqual(r["value_usd"], 180.22)
+        self.assertAlmostEqual(r["value_inr"], 180.22)
 
     def test_margin(self):
-        r = check.check([buy("KO", 1500)], v1(cash_buffer_pct=0, max_position_pct=100),
-                        portfolio={"cash": 1000, "positions": []}, today=V1_TODAY)["results"][0]
+        r = check.check([buy("KO", 16)], v1(cash_buffer_pct=0, max_position_pct=100),
+                        portfolio={"cash": 1000, "positions": []}, prices=PRICES, today=V1_TODAY)["results"][0]
         self.assertIn("margin", " ".join(r["reasons"]))
 
-    PF = {"cash": 500.0, "positions": [{"ticker": "KO", "shares": 7.8571,
-                                         "lots": [{"date": "2026-10-13", "shares": 7.8571, "cost": 708.0}]}]}
+    PF = {"cash": 500.0, "positions": [{"ticker": "KO", "shares": 7,
+                                         "lots": [{"date": "2026-10-13", "shares": 7, "cost": 630.77}]}]}
 
     def test_short_sales_are_blocked(self):
         sell = {"symbol": "KO", "side": "sell", "qty": "10", "type": "market", "time_in_force": "day"}
@@ -435,28 +455,29 @@ class V1Checks(unittest.TestCase):
 
     def test_a_sell_frees_cash_for_a_later_buy(self):
         orders = [{"symbol": "KO", "side": "sell", "qty": "5", "type": "market", "time_in_force": "day"},
-                  buy("BAC", 450)]
+                  buy("BAC", 8)]
         res = check.check(orders, v1(max_position_pct=100), portfolio=self.PF, prices=PRICES, today=V1_TODAY)
         self.assertEqual(verdicts(res), ["PASS", "PASS"])
-        res = check.check([buy("BAC", 450)], v1(max_position_pct=100), portfolio=self.PF, prices=PRICES,
+        res = check.check([buy("BAC", 8)], v1(max_position_pct=100), portfolio=self.PF, prices=PRICES,
                           today=V1_TODAY)
         self.assertEqual(verdicts(res), ["BLOCK"])
 
     def test_daily_limit_and_already_placed_today(self):
         st = {"orders": [{"symbol": "T%d" % i, "side": "buy", "status": "placed", "at": V1_TODAY + "T09:45:00"}
                          for i in range(10)]}
-        res = check.check([buy("KO", 100)], v1(), state=st, today=V1_TODAY)
+        res = check.check([buy("KO", 1)], v1(), state=st, prices=PRICES, today=V1_TODAY)
         self.assertIn("daily limit", reasons(res))
-        res = check.check([buy("KO", 100)], v1(), state=st, today="2026-10-14")
+        res = check.check([buy("KO", 1)], v1(), state=st, prices=PRICES, today="2026-10-14")
         self.assertEqual(verdicts(res), ["PASS"])
         ko = {"orders": [{"symbol": "KO", "side": "buy", "status": "placed", "at": V1_TODAY + "T09:45:00"}]}
-        res = check.check([buy("KO", 100)], v1(), state=ko, today=V1_TODAY)
+        res = check.check([buy("KO", 1)], v1(), state=ko, prices=PRICES, today=V1_TODAY)
         self.assertIn("already placed today", reasons(res))
         declined = {"orders": [{"symbol": "KO", "side": "buy", "status": "declined", "at": V1_TODAY + "T09:45:00"}]}
-        self.assertEqual(verdicts(check.check([buy("KO", 100)], v1(), state=declined, today=V1_TODAY)), ["PASS"])
+        self.assertEqual(verdicts(check.check([buy("KO", 1)], v1(), state=declined, prices=PRICES,
+                                              today=V1_TODAY)), ["PASS"])
 
     def test_live_account_warns(self):
-        res = check.check([buy("KO", 100)], v1(paper=False), today=V1_TODAY)
+        res = check.check([buy("KO", 1)], v1(paper=False), prices=PRICES, today=V1_TODAY)
         self.assertIn("LIVE", res["warnings"][0])
 
 
@@ -487,7 +508,10 @@ class Cli(unittest.TestCase):
             out = os.path.join(d, "state", "risk.json")
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = check.main(["--orders", V1_ORDERS_PATH, "--config", c, "--portfolio", none, "--prices", none,
+                pp = os.path.join(d, "prices.json")
+                with open(pp, "w") as fh:
+                    json.dump({"prices": PRICES}, fh)
+                code = check.main(["--orders", V1_ORDERS_PATH, "--config", c, "--portfolio", none, "--prices", pp,
                                    "--state", none, "--today", V1_TODAY, "--out", out])
             self.assertEqual(code, 0)
             self.assertIn("5 passed, 0 blocked", buf.getvalue())
@@ -497,9 +521,9 @@ class Cli(unittest.TestCase):
             self.assertTrue(all(len(r["fingerprint"]) == 16 for r in rec["results"]))
             bad = os.path.join(d, "orders.json")
             with open(bad, "w") as fh:
-                json.dump({"orders": v1_orders() + [buy("AAPL", 100)]}, fh)
+                json.dump({"orders": v1_orders() + [buy("AAPL", 3)]}, fh)
             with redirect_stdout(io.StringIO()):
-                code = check.main(["--orders", bad, "--config", c, "--portfolio", none, "--prices", none,
+                code = check.main(["--orders", bad, "--config", c, "--portfolio", none, "--prices", pp,
                                    "--state", none, "--today", V1_TODAY, "--no-write"])
             self.assertEqual(code, 1)
 

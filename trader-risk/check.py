@@ -20,12 +20,16 @@ only; every other rule turns into a warning for it.
 
 What blocks an order (every order):
 
-  format        missing symbol or side, both or neither of qty / notional,
-                notional on anything but a market day order (Alpaca's rule),
-                a limit order without a limit price, unknown type; a bracket
-                that is not whole shares, not day / gtc, or misses a leg
-  asset         options (OCC symbols) unless "allow_options": true; crypto
-                and anything that is not a stock or ETF
+  format        missing symbol or side, no qty or a qty that is not a whole
+                number of shares (NSE trades whole shares; Zerodha Kite takes a
+                quantity, never a rupee amount, so a notional order is out),
+                a limit order without a limit price, a type Kite does not have
+                (trailing stops), a validity other than day or ioc, extended
+                hours, a product other than MIS (intraday) or CNC (delivery),
+                a bracket that is not day or misses a leg
+  asset         options and futures unless "allow_options": true; anything
+                that does not look like an NSE share symbol (RELIANCE, M&M,
+                BAJAJ-AUTO)
   short         selling more than you hold, unless "allow_short": true
 
 What blocks an entry (on top):
@@ -52,7 +56,8 @@ What blocks an entry (on top):
                 9:15 to the close; on a 1:00 p.m. early close the window ends
                 3 hours earlier too)
   pdt           only with "pdt_guard": true: 3 day trades already in the last
-                5 business days (a 4th would trip the old pattern-day-trader rule)
+                5 trading days. India has no such rule (it is a US one); some
+                people keep it as a self-limit
 
 Exit code 0 when every order passes, 1 when any order is blocked.
 The verdicts go to trader/state/risk.json with a fingerprint of each order,
@@ -75,16 +80,21 @@ DEFAULTS = {
     "paper": True, "blocked": [], "allow_options": False, "allow_margin": False, "allow_short": False,
     "pdt_guard": False,
 }
-ALPACA_FIELDS = ("symbol", "side", "qty", "notional", "type", "time_in_force", "limit_price",
-                 "stop_price", "trail_price", "trail_percent", "extended_hours", "client_order_id",
-                 "order_class", "take_profit_limit_price", "stop_loss_stop_price",
-                 "stop_loss_limit_price", "advanced_instructions")
+# The pack's order format (trader/orders.json). trader-broker turns each one into Zerodha Kite's
+# place_order arguments. The fingerprint covers every field that changes what reaches the market.
+ORDER_FIELDS = ("symbol", "side", "qty", "notional", "type", "time_in_force", "limit_price",
+                "stop_price", "trail_price", "trail_percent", "extended_hours", "client_order_id",
+                "order_class", "take_profit_limit_price", "stop_loss_stop_price",
+                "stop_loss_limit_price", "advanced_instructions", "product", "exchange")
 PRICE_FIELDS = ("qty", "notional", "limit_price", "stop_price", "take_profit_limit_price",
                 "stop_loss_stop_price", "stop_loss_limit_price")
-TYPES = {"market", "limit", "stop", "stop_limit", "trailing_stop"}
-TIFS = {"day", "gtc", "opg", "cls", "ioc", "fok"}
-OCC = re.compile(r"^[A-Z]{1,6}\d{6}[CP]\d{8}$")
-TICKER = re.compile(r"^[A-Z]{1,5}([.\-][A-Z]{1,2})?$")
+TYPES = {"market", "limit", "stop", "stop_limit"}          # Kite: MARKET, LIMIT, SL-M, SL
+NOT_ON_KITE = {"trailing_stop": "Kite has no trailing-stop order"}
+TIFS = {"day", "ioc"}                                     # Kite: DAY, IOC
+PRODUCTS = {"MIS": "intraday", "CNC": "delivery"}
+DERIVATIVE = re.compile(r"\d{2}[A-Z]{3}(\d+)?(FUT|CE|PE)$|\d+(CE|PE)$")  # NFO names: NIFTY26NOVFUT, ...24500CE
+TICKER = re.compile(r"^[A-Z0-9][A-Z0-9&\-]{0,19}$")     # NSE symbols: RELIANCE, M&M, BAJAJ-AUTO, 3MINDIA
+TICK_BANDS = ((250, 0.01), (1000, 0.05), (5000, 0.10), (10000, 0.50), (20000, 1.00))
 HHMM = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 CENT = 0.005
 FRESH_MINUTES = 15
@@ -248,7 +258,7 @@ def read_json(path, what, required=True):
 
 def fingerprint(order):
     """Same function in trader-broker/ticket.py: the exact order that was checked."""
-    core = {k: order[k] for k in ALPACA_FIELDS if k in order and order[k] is not None}
+    core = {k: order[k] for k in ORDER_FIELDS if k in order and order[k] is not None}
     blob = json.dumps(core, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
@@ -271,6 +281,22 @@ def _cent(x):
 
 def _p(x):
     return "%.2f" % float(x)
+
+
+def nse_tick(price, override=None):
+    """NSE's price step for a share at this price (bands from April 15 2025). NSE sets each stock's
+    band from a reference price, so "tick_size" in the config overrides the guess."""
+    if override:
+        return float(override)
+    for upto, tick in TICK_BANDS:
+        if float(price) <= upto:
+            return tick
+    return 5.00
+
+
+def off_tick(price, tick):
+    steps = float(price) / tick
+    return abs(steps - round(steps)) > 1e-6
 
 
 def account(cfg, portfolio, prices):
@@ -412,37 +438,47 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
             reasons.append("format: no symbol")
         if side not in ("buy", "sell"):
             reasons.append("format: side must be buy or sell, got %r" % o.get("side"))
-        if (qty is None) == (notional is None):
-            reasons.append("format: give exactly one of qty or notional")
+        product = str(o.get("product") or "MIS").strip().upper()
+        if notional is not None:
+            reasons.append("format: Zerodha Kite takes a quantity of shares, not a rupee amount (notional %s)"
+                           % o.get("notional"))
+        elif qty is None:
+            reasons.append("format: no qty")
+        elif _f(qty) is None or _f(qty) <= 0 or abs(_f(qty) - round(_f(qty))) > 1e-9:
+            reasons.append("format: NSE trades whole shares, got qty %r" % qty)
+        if product not in PRODUCTS:
+            reasons.append("format: product must be MIS (intraday) or CNC (delivery), got %r" % o.get("product"))
+        if str(o.get("exchange") or "NSE").upper() != "NSE":
+            reasons.append("format: this pack trades on NSE only, got exchange %r" % o.get("exchange"))
         for k in PRICE_FIELDS:
             if o.get(k) is not None:
                 v = _f(o.get(k))
                 if v is None or v <= 0:
                     reasons.append("format: %s must be a positive number, got %r" % (k, o.get(k)))
-                elif not isinstance(o.get(k), str):
-                    warns.append("send %s as a string (\"%s\"), the way place_stock_order types it"
-                                 % (k, o.get(k)))
-        if typ not in TYPES:
+                elif k != "qty" and k != "notional":
+                    tick = nse_tick(v, c.get("tick_size"))
+                    if off_tick(v, tick):
+                        warns.append("%s %s is not on NSE's %s tick for a share at that price: Kite may "
+                                     "reject it (set \"tick_size\" in the config if your broker shows another)"
+                                     % (k, _p(v), ("%.2f" % tick)))
+        if typ in NOT_ON_KITE:
+            reasons.append("format: %s order: %s" % (typ.replace("_", " "), NOT_ON_KITE[typ]))
+        elif typ not in TYPES:
             reasons.append("format: unknown order type %r" % typ)
         if tif not in TIFS:
-            reasons.append("format: unknown time_in_force %r" % tif)
-        if notional is not None and (typ != "market" or tif != "day"):
-            reasons.append("format: a notional (dollar) order must be a market order with time_in_force day")
+            reasons.append("format: time_in_force %r: Kite takes day or ioc" % tif)
         if typ in ("limit", "stop_limit") and o.get("limit_price") is None:
             reasons.append("format: a %s order needs a limit_price" % typ)
         if typ in ("stop", "stop_limit") and o.get("stop_price") is None:
             reasons.append("format: a %s order needs a stop_price" % typ)
-        if o.get("extended_hours") and not (typ == "limit" and tif in ("day", "gtc")):
-            reasons.append("format: extended hours needs a limit order with time_in_force day or gtc")
+        if o.get("extended_hours"):
+            reasons.append("format: NSE has no extended-hours session for this pack (Kite's after-market "
+                           "orders are not supported here)")
         if o.get("stop_loss_limit_price") is not None and o.get("stop_loss_stop_price") is None:
             reasons.append("format: stop_loss_limit_price needs a stop_loss_stop_price")
         if bracket:
-            if notional is not None:
-                reasons.append("format: a bracket order needs a whole-share qty, not a notional amount")
-            elif _f(qty) is not None and abs(_f(qty) - round(_f(qty))) > 1e-9:
-                reasons.append("format: a bracket order takes whole shares only, got qty %r" % qty)
-            if tif not in ("day", "gtc"):
-                reasons.append("format: a bracket order needs time_in_force day or gtc, got %r" % tif)
+            if tif != "day":
+                reasons.append("format: a bracket order needs time_in_force day, got %r" % tif)
             if o.get("take_profit_limit_price") is None or o.get("stop_loss_stop_price") is None:
                 reasons.append("format: a bracket order needs both take_profit_limit_price and "
                                "stop_loss_stop_price")
@@ -451,15 +487,15 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                          % (oc or "advanced_instructions"))
 
         # asset
-        if sym and OCC.match(sym.replace(" ", "")):
+        if sym and DERIVATIVE.search(sym.replace(" ", "")):
             if not c.get("allow_options"):
-                reasons.append("asset: %s is an option contract; options are off "
+                reasons.append("asset: %s is a futures or options contract; F&O is off "
                                "(\"allow_options\": false)" % sym)
             else:
-                warns.append("option order: options can lose 100%% of what you pay")
+                warns.append("F&O order: options can lose 100%% of what you pay, futures more than that")
         elif sym and ("/" in sym or not TICKER.match(sym)):
-            reasons.append("asset: %s does not look like a US stock or ETF ticker; "
-                           "this pack trades stocks and ETFs only" % sym)
+            reasons.append("asset: %s does not look like an NSE share symbol; "
+                           "this pack trades NSE shares and ETFs only" % sym)
 
         # the reference price: what one share costs to get in
         plan_entry = _f(plan.get("entry"))
@@ -603,9 +639,8 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                              "is %d a day" % (len(entries_today), batch_entries, cap_t))
             later.extend(win_reasons)
             if c.get("pdt_guard") and pdt_n >= 3:
-                later.append("pdt: %d day trades in the last 5 business days (%s); a 4th trips the "
-                             "pattern-day-trader rule your broker applies (\"pdt_guard\": true)"
-                             % (pdt_n, ", ".join(pdt_list)))
+                later.append("pdt: %d day trades in the last 5 trading days (%s); your own limit is 3 "
+                             "(\"pdt_guard\": true)" % (pdt_n, ", ".join(pdt_list)))
             if stop and ref and risk_ps:
                 info.append("entry %s (%s), stop %s, target %s: risk %s a share"
                             % (_p(ref), REF_WORDS.get(ref_from, ref_from), _p(stop),
@@ -662,7 +697,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
         results.append({
             "index": i, "symbol": sym, "side": side, "kind": kind,
             "amount": money(_f(notional) or 0) if notional is not None else ("%s shares" % qty),
-            "value_usd": round(value, 2) if value is not None else None,
+            "value_inr": round(value, 2) if value is not None else None,
             "entry_ref": round(ref, 2) if ref else None, "entry_ref_from": ref_from,
             "stop": stop, "target": target, "risk_per_share": risk_ps, "max_loss": max_loss,
             "reward_risk": rr, "fingerprint": fingerprint(o), "verdict": verdict,

@@ -184,8 +184,10 @@ class Fetcher(object):
             raise NewsError("could not reach %s: %s" % (url, exc.reason))
 
 
-def yahoo_symbol(ticker):
-    return ticker.upper().replace(".", "-")
+def yahoo_tickerbol(ticker):
+    """NSE symbolbol -> Yahoo's: RELIANCE -> RELIANCE.NS (M&M stays M&M, quoted in the URL)."""
+    ticker = ticker.upper().strip()
+    return ticker if ticker.endswith(".NS") else ticker + ".NS"
 
 
 def cik_map(fetcher, state):

@@ -47,6 +47,7 @@ import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from decimal import Decimal, InvalidOperation, ROUND_FLOOR, ROUND_HALF_UP
 
@@ -372,11 +373,13 @@ def read_text(path):
 
 
 def load_chart(sym, interval, day, offline=None):
-    ysym = sym.upper().replace(".", "-")
+    ysym = sym.upper() if sym.upper().endswith(".NS") else sym.upper() + ".NS"   # Yahoo's name for an NSE share
     if offline:
         path = offline
         if os.path.isdir(offline):
-            path = os.path.join(offline, ysym + ".json")
+            path = os.path.join(offline, sym.upper() + ".json")
+            if not os.path.exists(path) and not os.path.exists(path + ".gz"):
+                path = os.path.join(offline, ysym + ".json")
             if not os.path.exists(path):
                 path += ".gz"
         if not os.path.exists(path):
@@ -390,7 +393,8 @@ def load_chart(sym, interval, day, offline=None):
         rng = "1d" if back <= 0 else "5d" if back <= 6 else "1mo" if back <= 28 else "60d"
         if interval == "1m" and back > 6:
             raise PlanError("Yahoo keeps 1-minute bars for about a week")
-        text = yahoo_get("/v8/finance/chart/%s?range=%s&interval=%s" % (ysym, rng, interval))
+        text = yahoo_get("/v8/finance/chart/%s?range=%s&interval=%s" % (
+            urllib.parse.quote(ysym, safe="-."), rng, interval))
     try:
         data = json.loads(text)
         res = data["chart"]["result"]

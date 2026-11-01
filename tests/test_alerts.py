@@ -44,9 +44,9 @@ def plan_rules():
 
 class Calendar(unittest.TestCase):
     def test_holidays_match_the_published_list(self):
-        self.assertEqual(sorted(alerts.NYSE_HOLIDAYS), NYSE_2026 + NYSE_2027)
-        self.assertEqual(sorted(alerts.NYSE_EARLY_CLOSE), EARLY)
-        for d in list(alerts.NYSE_HOLIDAYS) + list(alerts.NYSE_EARLY_CLOSE):
+        self.assertEqual(sorted(alerts.NSE_HOLIDAYS), NYSE_2026 + NYSE_2027)
+        self.assertEqual(sorted(alerts.NSE_EARLY_CLOSE), EARLY)
+        for d in list(alerts.NSE_HOLIDAYS) + list(alerts.NSE_EARLY_CLOSE):
             self.assertLess(datetime.date.fromisoformat(d).weekday(), 5, d)
 
     def test_daylight_saving_switches(self):
@@ -57,33 +57,33 @@ class Calendar(unittest.TestCase):
         self.assertEqual(alerts.eastern_offset(DT(2027, 3, 14, 7, 0)), -4)
 
     def test_parse_now(self):
-        self.assertEqual(ny("2026-10-13T09:30"), DT(2026, 10, 13, 13, 30))
-        self.assertEqual(ny("2026-10-19 10:15"), DT(2026, 10, 19, 14, 15))
-        self.assertEqual(ny("2026-12-01T09:30"), DT(2026, 12, 1, 14, 30))
-        self.assertEqual(ny("2026-10-13T20:00:01Z"), DT(2026, 10, 13, 20, 0, 1))
+        self.assertEqual(ny("2026-10-13T09:15"), DT(2026, 10, 13, 13, 30))
+        self.assertEqual(ny("2026-10-19 10:00"), DT(2026, 10, 19, 14, 15))
+        self.assertEqual(ny("2026-12-01T09:15"), DT(2026, 12, 1, 14, 30))
+        self.assertEqual(ny("2026-10-13T10:15:01Z"), DT(2026, 10, 13, 20, 0, 1))
         with self.assertRaises(alerts.AlertError):
             ny("tomorrow")
 
     def test_market_status(self):
-        st = alerts.market_status(ny("2026-10-13T10:00"))
+        st = alerts.market_status(ny("2026-10-13T09:45"))
         self.assertTrue(st["open"])
-        self.assertFalse(alerts.market_status(ny("2026-10-13T09:29"))["open"])
-        self.assertEqual(alerts.market_status(ny("2026-10-13T09:29"))["next_open"], "2026-10-13 09:30")
-        after = alerts.market_status(ny("2026-10-13T16:00"))
+        self.assertFalse(alerts.market_status(ny("2026-10-13T09:14"))["open"])
+        self.assertEqual(alerts.market_status(ny("2026-10-13T09:14"))["next_open"], "2026-10-13 09:15")
+        after = alerts.market_status(ny("2026-10-13T15:45"))
         self.assertFalse(after["open"])
-        self.assertEqual(after["next_open"], "2026-10-14 09:30")
-        july = alerts.market_status(ny("2026-07-03T11:00"))
+        self.assertEqual(after["next_open"], "2026-10-14 09:15")
+        july = alerts.market_status(ny("2026-07-03T10:45"))
         self.assertFalse(july["open"])
         self.assertIn("Independence Day", july["reason"])
-        self.assertEqual(july["next_open"], "2026-07-06 09:30")
-        self.assertTrue(alerts.market_status(ny("2026-11-27T12:59"))["open"])
-        self.assertFalse(alerts.market_status(ny("2026-11-27T13:00"))["open"])
-        xmas = alerts.market_status(ny("2027-12-24T10:00"))
+        self.assertEqual(july["next_open"], "2026-07-06 09:15")
+        self.assertTrue(alerts.market_status(ny("2026-11-27T12:44"))["open"])
+        self.assertFalse(alerts.market_status(ny("2026-11-27T12:45"))["open"])
+        xmas = alerts.market_status(ny("2027-12-24T09:45"))
         self.assertFalse(xmas["open"])
-        self.assertEqual(xmas["next_open"], "2027-12-27 09:30")
-        self.assertTrue(alerts.market_status(ny("2027-12-31T10:00"))["open"])
-        self.assertEqual(alerts.market_status(ny("2026-10-17T10:00"))["reason"], "weekend")
-        self.assertFalse(alerts.market_status(ny("2028-03-01T10:00"))["calendar_known"])
+        self.assertEqual(xmas["next_open"], "2027-12-27 09:15")
+        self.assertTrue(alerts.market_status(ny("2027-12-31T09:45"))["open"])
+        self.assertEqual(alerts.market_status(ny("2026-10-17T09:45"))["reason"], "weekend")
+        self.assertFalse(alerts.market_status(ny("2028-03-01T09:45"))["calendar_known"])
 
 
 class Quotes(unittest.TestCase):
@@ -92,11 +92,11 @@ class Quotes(unittest.TestCase):
             q = alerts.parse_yahoo(fh.read(), "AAPL")
         self.assertEqual(q["price"], 341.27)
         self.assertEqual(q["prev_close"], 340.97)
-        self.assertEqual(q["time"], "2026-10-13T20:00:01Z")
+        self.assertEqual(q["time"], "2026-10-13T10:15:01Z")
         with open(os.path.join(QDIR, "yahoo-TSLA.json")) as fh:
             q = alerts.parse_yahoo(fh.read(), "TSLA")
         self.assertEqual((q["price"], q["prev_close"], round(q["open"], 2)), (366.475, 354.72, 357.48))
-        self.assertEqual(q["time"], "2026-10-19T14:52:13Z")
+        self.assertEqual(q["time"], "2026-10-19T05:07:13Z")
 
     def test_stooq_fixture(self):
         with open(os.path.join(QDIR, "stooq-AAPL.csv")) as fh:
@@ -210,8 +210,8 @@ class Network(unittest.TestCase):
 class Rules(unittest.TestCase):
     def setUp(self):
         self.q, _ = alerts.get_quotes(["AAPL", "BAC", "KO", "TSLA"], "yahoo", QDIR)
-        self.open = alerts.market_status(ny("2026-10-13T10:00"))
-        self.now = ny("2026-10-13T10:00")
+        self.open = alerts.market_status(ny("2026-10-13T09:45"))
+        self.now = ny("2026-10-13T09:45")
 
     def at(self, text, rules, state=None, quotes=None):
         now = ny(text)
@@ -222,14 +222,14 @@ class Rules(unittest.TestCase):
         rules = [{"id": "aapl-340", "symbol": "AAPL", "type": "above", "price": 340}]
         rings, st = alerts.evaluate(rules, self.q, self.open, {}, self.now)
         self.assertEqual(len(rings), 1)
-        self.assertIn("AAPL is $341.27: at or above your alert level $340", rings[0]["message"])
+        self.assertIn("AAPL is ₹341.27: at or above your alert level ₹340", rings[0]["message"])
         rings, st = alerts.evaluate(rules, self.q, self.open, st, self.now)
         self.assertEqual(rings, [])
 
     def test_stop_and_rearm(self):
         rules = [{"id": "bac-stop", "symbol": "BAC", "type": "stop", "price": 54, "rearm": True}]
         rings, st = alerts.evaluate(rules, self.q, self.open, {}, self.now)
-        self.assertIn("your stop $54", rings[0]["message"])
+        self.assertIn("your stop ₹54", rings[0]["message"])
         self.q["BAC"]["price"] = 55.0
         rings, st = alerts.evaluate(rules, self.q, self.open, st, self.now)
         self.assertEqual(rings, [])
@@ -248,61 +248,61 @@ class Rules(unittest.TestCase):
         up = [{"id": "bac-up", "symbol": "BAC", "type": "pct_move", "pct": 1, "direction": "up"}]
         self.assertEqual(alerts.evaluate(up, self.q, self.open, {}, self.now)[0], [])
         tsla = [{"id": "tsla-3", "symbol": "TSLA", "type": "pct_move", "pct": 3}]
-        rings, _ = self.at("2026-10-19 10:52", tsla)
-        self.assertIn("TSLA moved +3.31% to $366.48 (from $354.72)", rings[0]["message"])
+        rings, _ = self.at("2026-10-19 10:37", tsla)
+        self.assertIn("TSLA moved +3.31% to ₹366.48 (from ₹354.72)", rings[0]["message"])
 
     def test_opening_bell_once_per_trading_day(self):
         rules = [{"id": "bell", "type": "opening_bell"}]
-        closed = alerts.market_status(ny("2026-10-13T08:00"))
-        self.assertEqual(alerts.evaluate(rules, {}, closed, {}, ny("2026-10-13T08:00"))[0], [])
+        closed = alerts.market_status(ny("2026-10-13T07:45"))
+        self.assertEqual(alerts.evaluate(rules, {}, closed, {}, ny("2026-10-13T07:45"))[0], [])
         rings, st = alerts.evaluate(rules, {}, self.open, {}, self.now)
         self.assertIn("Opening bell", rings[0]["message"])
-        self.assertEqual(alerts.evaluate(rules, {}, self.open, st, ny("2026-10-13T11:00"))[0], [])
-        nxt = alerts.market_status(ny("2026-10-14T09:31"))
-        self.assertEqual(len(alerts.evaluate(rules, {}, nxt, st, ny("2026-10-14T09:31"))[0]), 1)
+        self.assertEqual(alerts.evaluate(rules, {}, self.open, st, ny("2026-10-13T10:45"))[0], [])
+        nxt = alerts.market_status(ny("2026-10-14T09:16"))
+        self.assertEqual(len(alerts.evaluate(rules, {}, nxt, st, ny("2026-10-14T09:16"))[0]), 1)
 
     def test_the_plan_gives_a_stop_a_target_and_flat_by_close(self):
         rules = plan_rules()
         self.assertEqual([(r["id"], r["type"]) for r in rules],
                          [("tsla-plan-stop", "stop"), ("tsla-plan-target", "target"), ("tsla-flat-by", "time")])
         self.assertEqual((rules[0]["price"], rules[1]["price"]), (358.32, 370.04))
-        self.assertEqual((rules[2]["at"], rules[2]["label"], rules[2]["before_close"]), ("15:55", "flat by close", True))
+        self.assertEqual((rules[2]["at"], rules[2]["label"], rules[2]["before_close"]), ("15:40", "flat by close", True))
         self.assertTrue(all(r["date"] == "2026-10-19" for r in rules))
-        rings, st = self.at("2026-10-19 10:52", rules)          # the real 10:52 quote, 366.475
+        rings, st = self.at("2026-10-19 10:37", rules)          # the real 10:37 quote, 366.475
         self.assertEqual(rings, [])
         q = json.loads(json.dumps(self.q))
         q["TSLA"]["price"] = 358.10
-        rings, st = self.at("2026-10-19 11:30", rules, st, q)
+        rings, st = self.at("2026-10-19 11:15", rules, st, q)
         self.assertEqual([r["id"] for r in rings], ["tsla-plan-stop"])
-        self.assertIn("TSLA is $358.10: at or below your stop $358.32 (plan stop: opening-range midpoint)",
+        self.assertIn("TSLA is ₹358.10: at or below your stop ₹358.32 (plan stop: opening-range midpoint)",
                       rings[0]["message"])
         q["TSLA"]["price"] = 370.04
-        self.assertEqual([r["id"] for r in self.at("2026-10-19 12:00", rules, st, q)[0]], ["tsla-plan-target"])
+        self.assertEqual([r["id"] for r in self.at("2026-10-19 11:45", rules, st, q)[0]], ["tsla-plan-target"])
 
     def test_flat_by_close_rings_once_per_trading_day(self):
         rules = plan_rules()[2:]
-        self.assertEqual(self.at("2026-10-19 15:54", rules)[0], [])
-        rings, st = self.at("2026-10-19 15:55", rules)
+        self.assertEqual(self.at("2026-10-19 15:39", rules)[0], [])
+        rings, st = self.at("2026-10-19 15:40", rules)
         self.assertEqual(len(rings), 1)
-        self.assertIn("Flat by close: it is 15:55 New York (set for 15:55), the market closes at 16:00", rings[0]["message"])
+        self.assertIn("Flat by close: it is 15:40 IST (set for 15:40), the market closes at 15:45", rings[0]["message"])
         self.assertIn("trader-broker flatten --symbol TSLA", rings[0]["message"])
-        self.assertEqual(self.at("2026-10-19 15:59", rules, st)[0], [])
-        rings, _ = self.at("2026-10-19 16:10", rules)
+        self.assertEqual(self.at("2026-10-19 15:44", rules, st)[0], [])
+        rings, _ = self.at("2026-10-19 15:55", rules)
         self.assertIn("the market has closed", rings[0]["message"])
-        self.assertEqual(self.at("2026-10-20 15:56", rules, st)[0], [])     # plan rules: their day only
+        self.assertEqual(self.at("2026-10-21 15:41", rules, st)[0], [])     # plan rules: their day only
 
     def test_a_time_alert_moves_with_an_early_close(self):
-        rule = [{"id": "flat", "type": "time", "at": "15:55", "label": "flat by close", "before_close": True}]
-        self.assertEqual(self.at("2026-11-27 12:54", rule)[0], [])
-        rings, _ = self.at("2026-11-27 12:55", rule)
-        self.assertIn("set for 12:55), the market closes at 13:00", rings[0]["message"])
-        plain = [{"id": "t", "type": "time", "at": "15:55", "label": "check"}]
-        self.assertEqual(self.at("2026-11-27 12:55", plain)[0], [])
-        self.assertEqual(self.at("2026-10-17 15:56", rule)[0], [])         # Saturday: no session
-        self.assertEqual(self.at("2026-11-26 15:56", rule)[0], [])         # Thanksgiving
-        rings, st = self.at("2026-12-01 15:55", rule)                      # standard time
+        rule = [{"id": "flat", "type": "time", "at": "15:40", "label": "flat by close", "before_close": True}]
+        self.assertEqual(self.at("2026-11-27 12:39", rule)[0], [])
+        rings, _ = self.at("2026-11-27 12:40", rule)
+        self.assertIn("set for 12:40), the market closes at 12:45", rings[0]["message"])
+        plain = [{"id": "t", "type": "time", "at": "15:40", "label": "check"}]
+        self.assertEqual(self.at("2026-11-27 12:40", plain)[0], [])
+        self.assertEqual(self.at("2026-10-17 15:41", rule)[0], [])         # Saturday: no session
+        self.assertEqual(self.at("2026-11-26 15:41", rule)[0], [])         # Thanksgiving
+        rings, st = self.at("2026-12-01 15:40", rule)                      # standard time
         self.assertEqual(len(rings), 1)
-        self.assertEqual(st["rung"]["flat"], "2026-12-01T20:55:00Z")
+        self.assertEqual(st["rung"]["flat"], "2026-12-01T10:10:00Z")
 
     def test_the_example_rules_are_valid(self):
         with open(os.path.join(ROOT, "trader-alerts", "alerts.example.json")) as fh:
@@ -344,25 +344,25 @@ class Cli(unittest.TestCase):
         self.assertIn("Added tsla-flat-by", text)
         self.assertEqual(run(["add", "--rules", self.rules, "--opening-bell"])[0], 0)
 
-        code, text, _ = self.check("2026-10-19 10:52")
+        code, text, _ = self.check("2026-10-19 10:37")
         self.assertEqual(code, 0)                                      # the opening bell rings first
-        code, text, _ = self.check("2026-10-19 10:53")
+        code, text, _ = self.check("2026-10-19 10:38")
         self.assertEqual(code, 1)
-        self.assertIn("Nothing hit. 4 rule(s) watched today, TSLA $366.48.", text)
+        self.assertIn("Nothing hit. 4 rule(s) watched today, TSLA ₹366.48.", text)
         with open(self.prices) as fh:
             doc = json.load(fh)
         self.assertEqual(doc["prices"], {"TSLA": 366.475})
-        self.assertEqual(doc["detail"]["TSLA"]["time"], "2026-10-19T14:52:13Z")
-        self.assertEqual(doc["detail"]["TSLA"]["fetched"], "2026-10-19T14:53:00Z")
+        self.assertEqual(doc["detail"]["TSLA"]["time"], "2026-10-19T05:07:13Z")
+        self.assertEqual(doc["detail"]["TSLA"]["fetched"], "2026-10-19T05:08:00Z")
 
-        code, text, _ = self.check("2026-10-19 15:55")
+        code, text, _ = self.check("2026-10-19 15:40")
         self.assertEqual(code, 0)
         self.assertIn("ALERT Flat by close", text)
         self.assertIn("not an order", text)
-        self.assertEqual(self.check("2026-10-19 15:57")[0], 1)
-        code, text, _ = self.check("2026-10-20 10:00")
+        self.assertEqual(self.check("2026-10-19 15:42")[0], 1)
+        code, text, _ = self.check("2026-10-21 09:45")
         self.assertIn("ALERT Opening bell", text)
-        code, text, _ = self.check("2026-10-20 10:05")
+        code, text, _ = self.check("2026-10-21 09:50")
         self.assertIn("Nothing hit. 1 rule(s) watched today.", text)
 
         # a new plan replaces the plan rules and re-arms them
@@ -381,17 +381,17 @@ class Cli(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("already exists", err)
 
-        code, text, _ = self.check("2026-10-13T20:00")
+        code, text, _ = self.check("2026-10-13T19:45")
         self.assertEqual(code, 1)
         self.assertIn("Nothing hit", text)
         with open(self.prices) as fh:
             doc = json.load(fh)
         self.assertEqual(doc["prices"], {"AAPL": 341.27, "BAC": 53.96})
 
-        code, text, _ = self.check("2026-10-14T09:31")
+        code, text, _ = self.check("2026-10-14T09:16")
         self.assertEqual(code, 0)
         self.assertIn("ALERT Opening bell", text)
-        code, text, _ = self.check("2026-10-14T09:45")
+        code, text, _ = self.check("2026-10-14T09:30")
         self.assertEqual(code, 1)
 
         code, text, _ = run(["list", "--rules", self.rules, "--state", self.state])
@@ -400,7 +400,7 @@ class Cli(unittest.TestCase):
         self.assertEqual(run(["reset", "opening-bell", "--state", self.state])[0], 1)
 
     def test_add_time_and_target(self):
-        code, text, _ = run(["add", "--rules", self.rules, "--at", "15:55", "--label", "flat by close",
+        code, text, _ = run(["add", "--rules", self.rules, "--at", "15:40", "--label", "flat by close",
                              "--before-close", "--symbol", "tsla"])
         self.assertEqual(code, 0)
         code, text, _ = run(["add", "--rules", self.rules, "--symbol", "TSLA", "--target", "370.04",
@@ -408,7 +408,7 @@ class Cli(unittest.TestCase):
         self.assertEqual(code, 0)
         with open(self.rules) as fh:
             rules = json.load(fh)["rules"]
-        self.assertEqual(rules[0], {"id": "time-1555", "type": "time", "at": "15:55", "label": "flat by close",
+        self.assertEqual(rules[0], {"id": "time-1555", "type": "time", "at": "15:40", "label": "flat by close",
                                     "symbol": "TSLA", "before_close": True})
         self.assertEqual(rules[1], {"id": "tsla-target-370.04", "symbol": "TSLA", "type": "target",
                                     "price": 370.04, "date": "2026-10-19"})
@@ -419,16 +419,16 @@ class Cli(unittest.TestCase):
 
     def test_quote_write_merges(self):
         code, text, _ = run(["quote", "AAPL", "KO", "--offline", QDIR, "--write", self.prices,
-                             "--now", "2026-10-13T20:00:01Z"])
+                             "--now", "2026-10-13T10:15:01Z"])
         self.assertEqual(code, 0)
-        self.assertIn("AAPL   $341.27", text)
+        self.assertIn("AAPL   ₹341.27", text)
         self.assertIn("delayed", text)
         run(["quote", "BAC", "--offline", QDIR, "--write", self.prices])
         with open(self.prices) as fh:
             doc = json.load(fh)
         self.assertEqual(sorted(doc["prices"]), ["AAPL", "BAC", "KO"])
         self.assertEqual(doc["detail"]["KO"]["prev_close"], 89.79)
-        self.assertEqual(doc["detail"]["KO"]["fetched"], "2026-10-13T20:00:01Z")
+        self.assertEqual(doc["detail"]["KO"]["fetched"], "2026-10-13T10:15:01Z")
 
     def test_quote_holdings_from_portfolio_and_plan(self):
         pf = os.path.join(self.d, "portfolio.json")
@@ -439,8 +439,8 @@ class Cli(unittest.TestCase):
         self.assertEqual(sorted(json.loads(text)["quotes"]), ["KO", "TSLA"])
 
     def test_clock_exit_codes(self):
-        self.assertEqual(run(["clock", "--now", "2026-10-19 10:15"])[0], 0)
-        code, text, _ = run(["clock", "--now", "2026-12-25T10:00"])
+        self.assertEqual(run(["clock", "--now", "2026-10-19 10:00"])[0], 0)
+        code, text, _ = run(["clock", "--now", "2026-12-25T09:45"])
         self.assertEqual(code, 1)
         self.assertIn("Christmas Day", text)
 

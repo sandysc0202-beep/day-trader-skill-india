@@ -344,7 +344,7 @@ def _absorb(doc, name_hint, data, errors):
                 sym = (doc["chart"].get("result") or [{}])[0]["meta"]["symbol"]
             except (AttributeError, KeyError, TypeError, IndexError):
                 raise ScanError("an offline v8 chart without a symbol: name the file <TICKER>.json")
-        sym = sym.upper().replace("-", ".")
+        sym = from_yahoo(sym)
         try:
             data[sym] = parse_chart(doc, sym)
         except ScanError as e:

@@ -59,6 +59,7 @@ import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 UA = "Mozilla/5.0 (compatible; day-trader-skill/2.0; +https://github.com/Jakeschincariol/day-trader-skill)"
@@ -206,11 +207,14 @@ def next_open(d):
 # ---------------------------------------------------------------- Yahoo
 
 def yahoo_symbol(sym):
-    return sym.upper().replace(".", "-")
+    """NSE symbol -> Yahoo's: RELIANCE -> RELIANCE.NS (M&M stays M&M, quoted in the URL)."""
+    sym = sym.upper().strip()
+    return sym if sym.endswith(".NS") else sym + ".NS"
 
 
 def chart_path(sym, rng, interval):
-    return "/v8/finance/chart/%s?range=%s&interval=%s" % (yahoo_symbol(sym), rng, interval)
+    return "/v8/finance/chart/%s?range=%s&interval=%s" % (
+        urllib.parse.quote(yahoo_symbol(sym), safe="-."), rng, interval)
 
 
 def chart_range(day, today, interval):
@@ -304,7 +308,8 @@ def parse_chart(text, sym):
         o, h, lo = at("open", i), at("high", i), at("low", i)
         bars.append({"t": int(t), "o": float(c if o is None else o), "h": float(c if h is None else h),
                      "l": float(c if lo is None else lo), "c": float(c), "v": int(at("volume", i) or 0)})
-    return {"symbol": str(meta.get("symbol") or sym).upper(), "meta": meta, "bars": bars,
+    msym = str(meta.get("symbol") or sym).upper()
+    return {"symbol": msym[:-3] if msym.endswith(".NS") else msym, "meta": meta, "bars": bars,
             "prev_close": meta.get("previousClose") or meta.get("chartPreviousClose"),
             "data_time": meta.get("regularMarketTime")}
 
@@ -319,7 +324,7 @@ def read_text(path):
 
 def offline_file(path, sym):
     if os.path.isdir(path):
-        for name in (sym + ".json", sym + ".json.gz", yahoo_symbol(sym) + ".json", yahoo_symbol(sym) + ".json.gz"):
+        for name in (sym + ".json", sym + ".json.gz", yahoo_symbol(sym) + ".json", yahoo_symbol(sym) + ".json.gz"):  # noqa
             p = os.path.join(path, name)
             if os.path.exists(p):
                 return p
@@ -342,7 +347,7 @@ def get_chart(sym, interval, day=None, offline=None, today=None):
         today = today or to_ist(utc_now()).date()
         text = yahoo_get(chart_path(sym, chart_range(day or today, today, interval), interval))
     ch = parse_chart(text, sym)
-    if ch["symbol"] != yahoo_symbol(sym):
+    if ch["symbol"] != (sym[:-3] if sym.endswith(".NS") else sym):
         raise EntryError("the chart file holds %s, not %s" % (ch["symbol"], sym))
     gran = ch["meta"].get("dataGranularity")
     if gran and gran != interval:

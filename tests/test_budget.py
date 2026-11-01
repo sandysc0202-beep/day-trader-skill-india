@@ -13,7 +13,7 @@ CFG = os.path.join(ROOT, "trader-budget", "config.example.json")
 PLAN = os.path.join(FIX, "trader-budget", "plan-tsla.json")
 TARGETS = os.path.join(ROOT, "trader-budget", "targets.example.json")
 TOP5 = os.path.join(FIX, "trader-budget", "berkshire-q2-2026-top5.json")
-NOW = "2026-10-19 10:15"
+NOW = "2026-10-19 10:00"
 TODAY = "2026-10-19"
 REEL_V1 = {"AAPL": 1250, "AXP": 1119, "GOOGL": 823, "KO": 708, "BAC": 600}
 PRICES = {"AAPL": 341.27, "AXP": 309.84, "GOOGL": 353.78, "KO": 90.11, "BAC": 53.96}
@@ -22,7 +22,7 @@ CONTRACT_CFG = {
     "budget": 5000, "cash_buffer_pct": 10, "max_position_pct": 75, "max_order_usd": 4000, "min_order_usd": 5,
     "max_loss_per_trade_usd": 50, "max_daily_loss_usd": 150, "max_trades_per_day": 3, "max_orders_per_day": 10,
     "min_reward_risk": 1.0, "require_stop": True,
-    "no_entries_before": "09:45", "no_entries_after": "15:30", "flat_by": "15:55",
+    "no_entries_before": "09:30", "no_entries_after": "15:15", "flat_by": "15:40",
     "fractional": False, "broker": "alpaca", "paper": True, "blocked": [],
     "allow_options": False, "allow_margin": False, "allow_short": False, "pdt_guard": False,
     "sec_user_agent": "Your Name you@example.com",
@@ -68,13 +68,13 @@ def run(argv):
     return code, out.getvalue(), err.getvalue()
 
 
-def prices_doc(price, quote_time="2026-10-19T14:52:13Z"):
+def prices_doc(price, quote_time="2026-10-19T05:07:13Z"):
     return {"as_of": quote_time, "source": "yahoo", "prices": {"TSLA": price},
             "detail": {"TSLA": {"prev_close": 354.72, "time": quote_time, "source": "yahoo"}}}
 
 
 class TheReel(unittest.TestCase):
-    """$5,000, 10% buffer, $50 max loss, TSLA risk 5.86 -> 8 shares, $2,913.44, max loss $46.88."""
+    """₹5,000, 10% buffer, ₹50 max loss, TSLA risk 5.86 -> 8 shares, ₹2,913.44, max loss ₹46.88."""
 
     def test_config_example_is_the_contract(self):
         with open(CFG) as fh:
@@ -101,9 +101,9 @@ class TheReel(unittest.TestCase):
             "symbol": "TSLA", "side": "buy", "qty": "8", "type": "market", "time_in_force": "day",
             "order_class": "bracket", "take_profit_limit_price": "370.04", "stop_loss_stop_price": "358.32",
             "plan": {"entry": 364.18, "stop": 358.32, "target": 370.04, "risk_per_share": 5.86,
-                     "max_loss": 46.88, "setup": "orb", "entry_time": "10:15 AM", "flat_by": "15:55"}})
-        self.assertIn("bound by your $50 max loss", why)
-        self.assertIn("$46.88", why)
+                     "max_loss": 46.88, "setup": "orb", "entry_time": "10:00 AM", "flat_by": "15:40"}})
+        self.assertIn("bound by your ₹50 max loss", why)
+        self.assertIn("₹46.88", why)
 
     def test_the_fixture_orders_file_is_what_it_writes(self):
         with open(os.path.join(FIX, "trader-risk", "orders-tsla.json")) as fh:
@@ -123,15 +123,15 @@ class TheReel(unittest.TestCase):
             code, text, _ = run(["--plan", PLAN, "--config", CFG, "--portfolio", os.path.join(d, "none"),
                                  "--now", NOW, "--write", out])
             self.assertEqual(code, 0)
-            self.assertIn("Size: 8 shares of TSLA = $2,913.44 at 364.18", text)
-            self.assertIn("8 x 5.86 = $46.88", text)
+            self.assertIn("Size: 8 shares of TSLA = ₹2,913.44 at 364.18", text)
+            self.assertIn("8 x 5.86 = ₹46.88", text)
             self.assertIn("<- binds", text)
             self.assertIn("not financial advice", text)
             with open(out) as fh:
                 doc = json.load(fh)
             self.assertEqual(doc["status"], "proposed")
             self.assertIs(doc["paper"], True)
-            self.assertEqual(doc["created_at"], "2026-10-19T14:15:00Z")
+            self.assertEqual(doc["created_at"], "2026-10-19T04:30:00Z")
             self.assertEqual(len(doc["orders"]), 1)
             self.assertEqual(doc["orders"][0]["plan"]["max_loss"], 46.88)
 
@@ -148,7 +148,7 @@ class PlanRules(unittest.TestCase):
     def test_zero_shares_is_a_plain_refusal(self):
         s = size.size_trade(plan(stop=300.0), cfg(), today=TODAY)
         self.assertEqual(s["qty"], 0)
-        self.assertIn("more than your $50 max loss per trade", s["refusal"])
+        self.assertIn("more than your ₹50 max loss per trade", s["refusal"])
         self.assertIsNone(size.bracket_order(s))
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "plan.json")
@@ -188,11 +188,11 @@ class PlanRules(unittest.TestCase):
             with open(pp, "w") as fh:
                 json.dump(prices_doc(366.475), fh)
             base = ["--plan", PLAN, "--config", CFG, "--portfolio", os.path.join(d, "none"), "--prices", pp, "--json"]
-            code, text, _ = run(base + ["--now", "2026-10-19 10:55"])
+            code, text, _ = run(base + ["--now", "2026-10-19 10:40"])
             out = json.loads(text)
             self.assertEqual((code, out["sizing"]["qty"], out["orders"]), (1, 6, []))
             self.assertIn("above the plan's entry", out["notes"][0])
-            out = json.loads(run(base + ["--now", "2026-10-19 11:30"])[1])
+            out = json.loads(run(base + ["--now", "2026-10-19 11:15"])[1])
             self.assertEqual(out["sizing"]["qty"], 8)
             self.assertIn("not used", out["notes"][0])
 
@@ -220,14 +220,14 @@ class PlanRules(unittest.TestCase):
             size.size_trade(plan(), cfg(blocked=["tsla"]), today=TODAY)
         self.assertIn("blocked list", str(e.exception))
         with self.assertRaises(size.SizeError) as e:
-            size.size_trade(plan(), cfg(), today="2026-10-20")
+            size.size_trade(plan(), cfg(), today="2026-10-21")
         self.assertIn("make a new plan", str(e.exception))
 
     def test_under_the_minimum_order(self):
         cheap = plan(symbol="ABC", entry=4.0, stop=3.0, target=5.0)
         s = size.size_trade(cheap, cfg(max_loss_per_trade_usd=1), today=TODAY)
         self.assertEqual(s["qty"], 1)
-        self.assertIn("under your $5 minimum order", s["refusal"])
+        self.assertIn("under your ₹5 minimum order", s["refusal"])
         self.assertIsNone(size.bracket_order(s))
 
     def test_missing_plan_and_weights_only_flags(self):
@@ -243,7 +243,7 @@ class PlanRules(unittest.TestCase):
 
 
 class WeightsMode(unittest.TestCase):
-    """v1's split, kept behind --weights / --targets: $5,000, 10% cash, 25% cap."""
+    """v1's split, kept behind --weights / --targets: ₹5,000, 10% cash, 25% cap."""
 
     def check_reel(self, r):
         self.assertEqual(dollars(r), REEL_V1)

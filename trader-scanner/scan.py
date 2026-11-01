@@ -537,7 +537,7 @@ def scan_daily(data, symbols, now_utc, min_price, min_volume):
             hits.append({"symbol": sym, "setups": tags, "price": round(closes[-1], 2),
                          "close_date": d_last.isoformat(), "rsi": round(nums["rsi"], 1),
                          "volume": int(vol) if vol is not None else None})
-    hits.sort(key=lambda h: (-(h["price"] * (h["volume"] or 0)), h["symbol"]))  # most dollars traded first
+    hits.sort(key=lambda h: (-(h["price"] * (h["volume"] or 0)), h["symbol"]))  # most rupees traded first
     last_date = max(dates, key=lambda d: (dates[d], d)) if dates else None
     counts["hits"] = len(hits)
     return hits, counts, last_date

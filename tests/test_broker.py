@@ -25,8 +25,9 @@ TSLA_CALL = {"variety": "regular", "exchange": "NSE", "tradingsymbol": "TSLA", "
              "quantity": 8, "product": "MIS", "order_type": "MARKET", "validity": "DAY"}
 TSLA_STOP_CALL = {"variety": "regular", "exchange": "NSE", "tradingsymbol": "TSLA", "transaction_type": "SELL",
                   "quantity": 8, "product": "MIS", "order_type": "SL-M", "validity": "DAY", "trigger_price": 358.32}
-TSLA_PLAIN = ("BUY 8 TSLA, market, good for today / stop-loss 358.32 / take-profit 370.04 / max loss about "
-              "₹46.88 if the stop fills at 358.32 (it can fill worse in a fast market)")
+TSLA_PLAIN = ("BUY 8 TSLA, market, good for today / stop-loss 358.32 / target 370.04 (trader-alerts watches it; "
+              "Kite holds no target order) / max loss about ₹46.88 if the stop fills at 358.32 (it can fill worse "
+              "in a fast market)")
 
 
 def tsla(**over):

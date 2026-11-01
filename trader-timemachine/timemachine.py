@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Time Machine for trader-timemachine. Standard library only.
 
-Replays a planned day trade before you risk a dollar: 10,000 simulated runs of
+Replays a planned day trade before you risk a rupee: 10,000 simulated runs of
 the rest of the session from your entry, plus the same rule on every past
 session in the data.
 

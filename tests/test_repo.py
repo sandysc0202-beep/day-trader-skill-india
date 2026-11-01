@@ -5,15 +5,14 @@ import unittest
 
 from _load import ROOT
 
-# v2, the day-trading pack: the eleven folders the reel's repo card shows
+# the India edition: the upstream v2 pack less the US-only Pelosi tracker
 SKILLS = ["trader-scanner", "trader-news", "trader-entry", "trader-exit", "trader-timemachine",
-          "trader-risk", "trader-budget", "trader-broker", "trader-alerts", "trader-analyst",
-          "trader-pelosi"]
-ABOUT = ("11 Claude skills for day trading: scan thousands of charts, track breaking news, time every "
-         "entry and exit, and replay every outcome before you risk a dollar.")
+          "trader-risk", "trader-budget", "trader-broker", "trader-alerts", "trader-analyst"]
+ABOUT = ("10 Claude skills for day trading on NSE: scan the market's charts, track breaking news and NSE filings, "
+         "time every entry and exit, and replay every outcome before you risk a rupee.")
 # skills on the way to an order carry the safety block
 ORDER_PATH = ["trader-scanner", "trader-entry", "trader-exit", "trader-timemachine", "trader-budget",
-              "trader-pelosi", "trader-risk", "trader-broker", "trader-alerts"]
+              "trader-risk", "trader-broker", "trader-alerts"]
 V1_ONLY = ["trader-copycat", "trader-screener", "trader-tax", "trader-rebalance"]
 
 
@@ -33,7 +32,7 @@ def every_text_file():
 
 
 class Repo(unittest.TestCase):
-    def test_eleven_skill_folders_at_the_root(self):
+    def test_ten_skill_folders_at_the_root(self):
         found = sorted(d for d in os.listdir(ROOT)
                        if os.path.isfile(os.path.join(ROOT, d, "SKILL.md")))
         self.assertEqual(found, sorted(SKILLS))
@@ -60,23 +59,24 @@ class Repo(unittest.TestCase):
     def test_plugin_manifest_points_at_the_root_skills(self):
         with open(os.path.join(ROOT, ".claude-plugin", "plugin.json")) as fh:
             plugin = json.load(fh)
-        self.assertEqual(plugin["name"], "day-trader-skill")
+        self.assertEqual(plugin["name"], "day-trader-skill-india")
         self.assertEqual(plugin["skills"], "./")
         self.assertEqual(plugin["description"], ABOUT)
         with open(os.path.join(ROOT, ".claude-plugin", "marketplace.json")) as fh:
             market = json.load(fh)
-        self.assertEqual(market["name"], "day-trader-skill")
-        self.assertEqual(market["plugins"][0]["name"], "day-trader-skill")
+        self.assertEqual(market["name"], "day-trader-skill-india")
+        self.assertEqual(market["plugins"][0]["name"], "day-trader-skill-india")
 
     def test_readme_carries_the_reel_copy(self):
         with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as fh:
             readme = " ".join(fh.read().split())
-        self.assertTrue(readme.startswith("# The Day Trader skill"))
+        self.assertTrue(readme.startswith("# The Day Trader skill, India edition"))
+        owner = json.load(open(os.path.join(ROOT, ".claude-plugin", "plugin.json")))["repository"].split("/")[3]
         for line in (ABOUT,
-                     "https://github.com/Jakeschincariol/day-trader-skill install skill",
-                     "/plugin marketplace add Jakeschincariol/day-trader-skill",
-                     "/plugin install day-trader-skill@day-trader-skill",
-                     "## Fine print"):
+                     "https://github.com/%s/day-trader-skill-india install skill" % owner,
+                     "/plugin marketplace add %s/day-trader-skill-india" % owner,
+                     "/plugin install day-trader-skill-india@day-trader-skill-india",
+                     "## Fine print", "Not financial advice"):
             self.assertIn(line, readme)
         for s in SKILLS:
             self.assertIn("/" + s, readme, s)
@@ -127,6 +127,19 @@ class Repo(unittest.TestCase):
         self.assertIs(cfg["require_stop"], True)
         self.assertIs(cfg.get("allow_short", False), False)
         self.assertIs(cfg.get("allow_margin", False), False)
+
+    def test_no_us_market_leftovers_in_the_tools(self):
+        # the tools speak NSE, IST, rupees and Kite; the US words may only appear where they explain the port
+        for s in SKILLS:
+            folder = os.path.join(ROOT, s)
+            for f in os.listdir(folder):
+                if not f.endswith((".py", ".md", ".json")):
+                    continue
+                with open(os.path.join(folder, f), encoding="utf-8") as fh:
+                    text = fh.read()
+                for bad in ("NYSE", "New York", "Alpaca", "place_stock_order", "SEC EDGAR", "Nasdaq Trader",
+                            "sec_user_agent", "_usd"):
+                    self.assertNotIn(bad, text, "%s/%s: %s" % (s, f, bad))
 
     def test_paper_trading_is_the_default(self):
         with open(os.path.join(ROOT, "trader-budget", "config.example.json")) as fh:

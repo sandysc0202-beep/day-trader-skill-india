@@ -508,7 +508,7 @@ def allocate(rows, investable, cap):
 
     Proportional to weight; any stock over the cap is pinned at the cap and
     the rest of the money is shared over the others, repeated until no stock
-    is over. Returns ({ticker: dollars}, set of capped tickers)."""
+    is over. Returns ({symbol: rupees}, set of capped symbols)."""
     alloc, capped = {}, set()
     active = [r for r in rows]
     money_left = investable

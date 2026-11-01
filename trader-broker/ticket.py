@@ -207,7 +207,7 @@ def is_bracket(order):
 
 
 def max_loss(order):
-    """(dollars, stop) lost if the stop fills exactly at the stop, or (None, stop)."""
+    """(rupees, stop) lost if the stop fills exactly at the stop, or (None, stop)."""
     stop = _f(order.get("stop_loss_stop_price")) or _f((order.get("plan") or {}).get("stop"))
     q = _f(order.get("qty"))
     if not stop or not q:
@@ -240,7 +240,8 @@ def plain_parts(order):
                 leg += " (limit %s)" % _p(order["stop_loss_limit_price"])
             parts.append(leg)
         if order.get("take_profit_limit_price") is not None:
-            parts.append("take-profit %s" % _p(order["take_profit_limit_price"]))
+            parts.append("target %s (trader-alerts watches it; Kite holds no target order)"
+                         % _p(order["take_profit_limit_price"]))
         loss, stop = max_loss(order)
         if loss is not None:
             parts.append("max loss about %s if the stop fills at %s (it can fill worse in a fast market)"
@@ -266,7 +267,7 @@ def plain_parts(order):
 
 def plain(order):
     """BUY 3 shares of RELIANCE, market order, good for today, delivery (CNC)
-    BUY 8 TSLA, market, good for today / stop-loss 358.32 / take-profit 370.04 / max loss about ₹46.88 ..."""
+    BUY 8 TSLA, market, good for today / stop-loss 358.32 / target 370.04 (...) / max loss about ₹46.88 ..."""
     return " / ".join(plain_parts(order))
 
 

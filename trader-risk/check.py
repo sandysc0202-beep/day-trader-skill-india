@@ -21,11 +21,11 @@ only; every other rule turns into a warning for it.
 What blocks an order (every order):
 
   format        missing symbol or side, no qty or a qty that is not a whole
-                number of shares (NSE trades whole shares; Zerodha Kite takes a
+                number of shares (NSE trades whole shares; FYERS takes a
                 quantity, never a rupee amount, so a notional order is out),
-                a limit order without a limit price, a type Kite does not have
+                a limit order without a limit price, a type FYERS does not have
                 (trailing stops), a validity other than day or ioc, extended
-                hours, a product other than MIS (intraday) or CNC (delivery),
+                hours, a product other than INTRADAY or CNC (delivery),
                 a bracket that is not day or misses a leg
   asset         options and futures unless "allow_options": true; anything
                 that does not look like an NSE share symbol (RELIANCE, M&M,
@@ -76,22 +76,22 @@ DEFAULTS = {
     "budget": None, "cash_buffer_pct": 10, "max_position_pct": 75, "max_order_inr": 50000,
     "min_order_inr": 100, "max_loss_per_trade_inr": 500, "max_daily_loss_inr": 1500, "max_trades_per_day": 3,
     "max_orders_per_day": 10, "min_reward_risk": 1.0, "require_stop": True,
-    "no_entries_before": "09:30", "no_entries_after": "15:00", "flat_by": "15:15",
+    "no_entries_before": "09:30", "no_entries_after": "14:45", "flat_by": "15:00",
     "paper": True, "blocked": [], "allow_options": False, "allow_margin": False, "allow_short": False,
     "pdt_guard": False,
 }
-# The pack's order format (trader/orders.json). trader-broker turns each one into Zerodha Kite's
-# place_order arguments. The fingerprint covers every field that changes what reaches the market.
+# The pack's order format (trader/orders.json). trader-broker turns each one into the body of
+# FYERS' Single Order API (fyers_api.order_payload). The fingerprint covers every field that changes what reaches the market.
 ORDER_FIELDS = ("symbol", "side", "qty", "notional", "type", "time_in_force", "limit_price",
                 "stop_price", "trail_price", "trail_percent", "extended_hours", "client_order_id",
                 "order_class", "take_profit_limit_price", "stop_loss_stop_price",
                 "stop_loss_limit_price", "advanced_instructions", "product", "exchange")
 PRICE_FIELDS = ("qty", "notional", "limit_price", "stop_price", "take_profit_limit_price",
                 "stop_loss_stop_price", "stop_loss_limit_price")
-TYPES = {"market", "limit", "stop", "stop_limit"}          # Kite: MARKET, LIMIT, SL-M, SL
-NOT_ON_KITE = {"trailing_stop": "Kite has no trailing-stop order"}
-TIFS = {"day", "ioc"}                                     # Kite: DAY, IOC
-PRODUCTS = {"MIS": "intraday", "CNC": "delivery"}
+TYPES = {"market", "limit", "stop", "stop_limit"}          # FYERS type 2, 1, 3 (SL-M), 4 (SL-L)
+NOT_ON_FYERS = {"trailing_stop": "FYERS has no trailing-stop order"}
+TIFS = {"day", "ioc"}                                     # FYERS: DAY, IOC
+PRODUCTS = {"INTRADAY": "intraday", "CNC": "delivery"}
 DERIVATIVE = re.compile(r"\d{2}[A-Z]{3}(\d+)?(FUT|CE|PE)$|\d+(CE|PE)$")  # NFO names: NIFTY26NOVFUT, ...24500CE
 TICKER = re.compile(r"^[A-Z0-9][A-Z0-9&\-]{0,19}$")     # NSE symbols: RELIANCE, M&M, BAJAJ-AUTO, 3MINDIA
 TICK_BANDS = ((250, 0.01), (1000, 0.05), (5000, 0.10), (10000, 0.50), (20000, 1.00))
@@ -438,16 +438,16 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
             reasons.append("format: no symbol")
         if side not in ("buy", "sell"):
             reasons.append("format: side must be buy or sell, got %r" % o.get("side"))
-        product = str(o.get("product") or "MIS").strip().upper()
+        product = str(o.get("product") or "INTRADAY").strip().upper()
         if notional is not None:
-            reasons.append("format: Zerodha Kite takes a quantity of shares, not a rupee amount (notional %s)"
+            reasons.append("format: FYERS takes a quantity of shares, not a rupee amount (notional %s)"
                            % o.get("notional"))
         elif qty is None:
             reasons.append("format: no qty")
         elif _f(qty) is None or _f(qty) <= 0 or abs(_f(qty) - round(_f(qty))) > 1e-9:
             reasons.append("format: NSE trades whole shares, got qty %r" % qty)
         if product not in PRODUCTS:
-            reasons.append("format: product must be MIS (intraday) or CNC (delivery), got %r" % o.get("product"))
+            reasons.append("format: product must be INTRADAY or CNC (delivery), got %r" % o.get("product"))
         if str(o.get("exchange") or "NSE").upper() != "NSE":
             reasons.append("format: this pack trades on NSE only, got exchange %r" % o.get("exchange"))
         for k in PRICE_FIELDS:
@@ -458,21 +458,21 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                 elif k != "qty" and k != "notional":
                     tick = nse_tick(v, c.get("tick_size"))
                     if off_tick(v, tick):
-                        warns.append("%s %s is not on NSE's %s tick for a share at that price: Kite may "
+                        warns.append("%s %s is not on NSE's %s tick for a share at that price: FYERS may "
                                      "reject it (set \"tick_size\" in the config if your broker shows another)"
                                      % (k, _p(v), ("%.2f" % tick)))
-        if typ in NOT_ON_KITE:
-            reasons.append("format: %s order: %s" % (typ.replace("_", " "), NOT_ON_KITE[typ]))
+        if typ in NOT_ON_FYERS:
+            reasons.append("format: %s order: %s" % (typ.replace("_", " "), NOT_ON_FYERS[typ]))
         elif typ not in TYPES:
             reasons.append("format: unknown order type %r" % typ)
         if tif not in TIFS:
-            reasons.append("format: time_in_force %r: Kite takes day or ioc" % tif)
+            reasons.append("format: time_in_force %r: FYERS takes day or ioc" % tif)
         if typ in ("limit", "stop_limit") and o.get("limit_price") is None:
             reasons.append("format: a %s order needs a limit_price" % typ)
         if typ in ("stop", "stop_limit") and o.get("stop_price") is None:
             reasons.append("format: a %s order needs a stop_price" % typ)
         if o.get("extended_hours"):
-            reasons.append("format: NSE has no extended-hours session for this pack (Kite's after-market "
+            reasons.append("format: NSE has no extended-hours session for this pack (after-market "
                            "orders are not supported here)")
         if o.get("stop_loss_limit_price") is not None and o.get("stop_loss_stop_price") is None:
             reasons.append("format: stop_loss_limit_price needs a stop_loss_stop_price")
@@ -590,7 +590,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
             target = _f(o.get("take_profit_limit_price")) or _f(plan.get("target"))
             if leg_stop and plan_stop and abs(leg_stop - plan_stop) > CENT:
                 warns.append("the bracket stop %s differs from the plan's stop %s: the bracket's is the one "
-                             "ticket.py protect sends to Kite" % (_p(leg_stop), _p(plan_stop)))
+                             "ticket.py protect sends to FYERS" % (_p(leg_stop), _p(plan_stop)))
             if stop and not leg_stop:
                 warns.append("the stop %s is in the plan only, not at the broker: set a stop alert "
                              "(trader-alerts: alerts.py add --from-plan)" % _p(stop))

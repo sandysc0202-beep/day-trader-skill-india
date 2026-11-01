@@ -29,10 +29,10 @@ it, a risk under 0.05% of the price (too tight to survive the spread), an
 entry.json that has not triggered (unless you give --entry), a short (v2
 plans longs only).
 
-flat_by (default 15:15, or "flat_by" in trader/config.json): out by then, win
-or lose. It must be before the 3:30 PM close. Brokers square off intraday (MIS)
-positions on their own a little before the close (Zerodha from about 3:20 PM),
-so the default leaves room.
+flat_by (default 15:00, or "flat_by" in trader/config.json): out by then, win
+or lose. It must be before the 3:30 PM close. FYERS squares off INTRADAY
+positions on its own from 3:05 PM for stocks that have F&O contracts (3:20 PM
+for the rest), with a charge, so the default gets out first.
 "min_reward_risk" in the config (default 1.0) only warns here; trader-risk
 enforces it.
 
@@ -57,7 +57,7 @@ UA = "Mozilla/5.0 (compatible; day-trader-skill/2.0; +https://github.com/Jakesch
 BACKOFF = 5.0
 HOSTS = ("query2", "query1")
 INTERVALS = {"1m": 60, "5m": 300}
-DEFAULTS = {"flat_by": "15:15", "min_reward_risk": 1.0, "tick_size": None}  # tick_size None: NSE's price bands
+DEFAULTS = {"flat_by": "15:00", "min_reward_risk": 1.0, "tick_size": None}  # tick_size None: NSE's price bands
 ATR_BARS = 14
 MIN_RISK_PCT = Decimal("0.05")     # risk under 0.05% of the price is inside the spread's noise
 CENT = Decimal("0.01")
@@ -357,8 +357,31 @@ def _sleep(seconds):
     time.sleep(seconds)
 
 
+def fyers_bridge():
+    """trader-broker/fyers_api.py when FYERS is today's data source (you logged in to FYERS
+    this morning, or TRADER_DATA_SOURCE=fyers), else None and Yahoo it is. FYERS' bars come
+    back in Yahoo's chart shape, so nothing else changes."""
+    folder = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "trader-broker")
+    if not os.path.isfile(os.path.join(folder, "fyers_api.py")):
+        return None
+    if folder not in sys.path:
+        sys.path.insert(0, folder)
+    try:
+        import fyers_api
+    except ImportError:
+        return None
+    return fyers_api if fyers_api.data_source() == "fyers" else None
+
+
 def yahoo_get(path):
-    """query2 first, query1 on 429 or 5xx; one retry after a pause on 429."""
+    """query2 first, query1 on 429 or 5xx; one retry after a pause on 429.
+    When FYERS is the data source, the same answer comes from FYERS instead."""
+    fy = fyers_bridge()
+    if fy:
+        try:
+            return fy.yahoo_compat(path)
+        except fy.FyersError as e:
+            raise PlanError(str(e))
     last = "no answer"
     for host in HOSTS:
         url = "https://%s.finance.yahoo.com%s" % (host, path)
@@ -519,8 +542,8 @@ def read_config(path):
 
 def resolve_flat_by(day, explicit, cfg, entry_time):
     """(HH:MM, note). Flat-by must come before the 3:30 PM close (NSE has no half days).
-    Most brokers square off intraday (MIS) positions on their own from about 3:15 PM to 3:25 PM,
-    so the default, 15:15, gets out first."""
+    FYERS squares off INTRADAY positions on its own from 3:05 PM (stocks with F&O contracts;
+    3:20 PM for the rest), so the default, 15:00, gets out first."""
     t = parse_hhmm(explicit or cfg.get("flat_by") or DEFAULTS["flat_by"], "--flat-by" if explicit else "flat_by")
     note = ""
     s = session(day) if day else None
@@ -530,9 +553,9 @@ def resolve_flat_by(day, explicit, cfg, entry_time):
         if at >= close_dt:
             raise PlanError("%s %s is at or after the %s close on %s" % (
                 "--flat-by" if explicit else "flat_by in the config", hm(t), ampm(s[1]), day))
-        if t > datetime.time(15, 20):
-            note = ("your broker may square off intraday (MIS) positions on its own before %s; "
-                    "Zerodha starts at about 3:20 PM" % hm(t))
+        if t > datetime.time(15, 0):
+            note = ("FYERS may square off the position on its own before %s: from 3:05 PM for stocks "
+                    "with F&O contracts, 3:20 PM for the rest, with a charge" % hm(t))
     if entry_time and entry_time >= t:
         raise PlanError("the entry at %s is at or after your flat-by %s: there is no time left to hold it"
                         % (ampm(entry_time), hm(t)))
@@ -724,7 +747,7 @@ def main(argv=None):
     p.add_argument("--side", default="buy", choices=["buy", "long", "sell", "short"], help="v2: buy only")
     p.add_argument("--stop", help="or-mid (orb default), or-low, price:X, pct:X, atr:K")
     p.add_argument("--target", help="2R (default), 1R, 1.5R, price:X")
-    p.add_argument("--flat-by", help="HH:MM IST (default: config flat_by, 15:15)")
+    p.add_argument("--flat-by", help="HH:MM IST (default: config flat_by, 15:00)")
     p.add_argument("--config", default="trader/config.json")
     p.add_argument("--offline", metavar="PATH", help="saved Yahoo chart JSON for an atr stop")
     p.add_argument("--now", help='pretend it is this India time (IST), e.g. "2026-10-19 10:15"')

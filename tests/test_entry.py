@@ -168,10 +168,10 @@ class Rules(unittest.TestCase):
         d = no_breakout()
         r = at("2026-10-19 10:34", d)
         self.assertEqual(r["status"], "waiting")
-        self.assertEqual(at("2026-10-19 14:59", d)["status"], "waiting")
-        r = at("2026-10-19 15:00", d)                                   # the default no_entries_after
+        self.assertEqual(at("2026-10-19 14:44", d)["status"], "waiting")
+        r = at("2026-10-19 14:45", d)                                   # the default no_entries_after
         self.assertEqual(r["status"], "expired")
-        self.assertIn("by 15:00", r["reason"])
+        self.assertIn("by 14:45", r["reason"])
         self.assertEqual(at("2026-10-19 16:15", d)["phase"], "after-close")
 
     def test_the_bar_closing_at_the_cutoff_still_counts_when_yahoo_lags(self):
@@ -456,11 +456,11 @@ class Watch(unittest.TestCase):
         self.assertEqual(res["trigger"]["time"], "10:00 AM")
 
     def test_expires_and_until(self):
-        code, res, lines, fired, clock = self.loop(live_provider(no_breakout()), "2026-10-19 14:45", every=300)
+        code, res, lines, fired, clock = self.loop(live_provider(no_breakout()), "2026-10-19 14:30", every=300)
         self.assertEqual(code, 1)
         self.assertEqual(res["status"], "expired")
         self.assertEqual(fired, [])
-        self.assertEqual(entry.to_ist(clock.now()).strftime("%H:%M"), "15:00")
+        self.assertEqual(entry.to_ist(clock.now()).strftime("%H:%M"), "14:45")
         until = DT(2026, 10, 19, 11, 0)
         code, res, lines, fired, clock = self.loop(live_provider(no_breakout()), "2026-10-19 10:15", every=300,
                                                    until=until)

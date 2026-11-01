@@ -181,9 +181,31 @@ def _get(url, timeout=20):
         return r.read().decode("utf-8", "replace")
 
 
+def fyers_bridge():
+    """trader-broker/fyers_api.py when FYERS is today's data source (you logged in to FYERS
+    this morning, or TRADER_DATA_SOURCE=fyers), else None and Yahoo it is. FYERS' bars come
+    back in Yahoo's chart shape, so nothing else changes."""
+    folder = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "trader-broker")
+    if not os.path.isfile(os.path.join(folder, "fyers_api.py")):
+        return None
+    if folder not in sys.path:
+        sys.path.insert(0, folder)
+    try:
+        import fyers_api
+    except ImportError:
+        return None
+    return fyers_api if fyers_api.data_source() == "fyers" else None
+
+
 def fetch_chart(sym):
     """One request for 60 days of 5-min bars. query2 first, one retry after a 429,
-    then query1 on 429 or 5xx."""
+    then query1 on 429 or 5xx. When FYERS is the data source, the bars come from FYERS."""
+    fy = fyers_bridge()
+    if fy:
+        try:
+            return fy.yahoo_compat(chart_url(sym))
+        except fy.FyersError as e:
+            raise TMError(str(e))
     last = None
     for n, host in enumerate(HOSTS):
         if n:

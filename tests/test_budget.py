@@ -24,8 +24,8 @@ CONTRACT_CFG = {
     "budget": 100000, "cash_buffer_pct": 10, "max_position_pct": 75, "max_order_inr": 50000, "min_order_inr": 100,
     "max_loss_per_trade_inr": 500, "max_daily_loss_inr": 1500, "max_trades_per_day": 3, "max_orders_per_day": 10,
     "min_reward_risk": 1.0, "require_stop": True,
-    "no_entries_before": "09:30", "no_entries_after": "15:00", "flat_by": "15:15",
-    "fractional": False, "tick_size": None, "broker": "zerodha", "paper": True, "blocked": [],
+    "no_entries_before": "09:30", "no_entries_after": "14:45", "flat_by": "15:00",
+    "fractional": False, "tick_size": None, "broker": "fyers", "paper": True, "blocked": [],
     "allow_options": False, "allow_margin": False, "allow_short": False, "pdt_guard": False,
 }
 # v1's rules, for the weights mode tests (fractional: a rupee split, no orders without prices)
@@ -109,7 +109,7 @@ class TheReel(unittest.TestCase):
         o = size.bracket_order(size.size_trade(plan(), cfg(), today=TODAY))
         why = o.pop("why")
         self.assertEqual(o, {
-            "symbol": "TSLA", "side": "buy", "qty": "8", "type": "market", "time_in_force": "day", "product": "MIS",
+            "symbol": "TSLA", "side": "buy", "qty": "8", "type": "market", "time_in_force": "day", "product": "INTRADAY",
             "order_class": "bracket", "take_profit_limit_price": "370.04", "stop_loss_stop_price": "358.32",
             "plan": {"entry": 364.18, "stop": 358.32, "target": 370.04, "risk_per_share": 5.86,
                      "max_loss": 46.88, "setup": "orb", "entry_time": "10:00 AM", "flat_by": "15:15"}})

@@ -69,9 +69,9 @@ day bar by bar without waiting.
   bar's volume at 1.5 times the range bars' average. The 9:15 bar follows
   NSE's pre-open call auction (9:00 to 9:08), so it carries the opening
   volume and 1.0 is already strict.
-- **Time limits.** No entries before 9:30 or after 15:00 (config). The
-  session closes at 3:30 PM and most brokers square off intraday positions
-  from about 3:15 to 3:25 PM, so a late entry has little room.
+- **Time limits.** No entries before 9:30 or after 14:45 (config). The
+  session closes at 3:30 PM and FYERS squares off INTRADAY positions from
+  3:05 PM for stocks with F&O contracts, so a late entry has little room.
 - **What it says.** Waiting (and how far the last close is from the level),
   triggered, expired, or no data. Before 9:15: not open yet. Before 9:30: the
   range is still forming. Weekends and NSE holidays: the market is closed.
@@ -139,12 +139,12 @@ watch: nobody is there to say yes.
 ## Safety
 
 - Education and tooling, not financial advice. A PASS is a rules check, not a recommendation.
-- Paper trading by default (`"paper": true`). Zerodha has no paper account, so paper means Claude records
-  a pretend fill and never calls Kite. Going live is the user's own decision, in their own config.
-- Nothing in this pack places an order except trader-broker, and only when all three hold: trader-risk
-  passed that exact order today, the user typed an explicit yes for that one order in the chat, and the
-  user clicked Allow once on Claude's own card because the order tool is set to "Needs approval"
-  (Customize > Connectors > tool permissions). Never set an order tool to "Always allow".
+- Paper trading by default (`"paper": true`). FYERS has no paper account, so paper means Claude records
+  a pretend fill and nothing goes to FYERS. Going live is the user's own decision, in their own config.
+- Nothing in this pack places an order except trader-broker's `ticket.py place`, and only when all three
+  hold: trader-risk passed that exact order today, the user typed an explicit yes for that one order in
+  the chat, and the user clicked Allow once on Claude's own card for that command. Never add
+  `ticket.py place` (or a FYERS MCP order tool) to an "Always allow" list.
 - No F&O, margin (MTF), short selling or leverage unless the config allows it and the user confirms.
-- The Zerodha login happens on Zerodha's own page, never in the chat. API keys, if any, live in the
-  Claude Desktop config or environment variables, never in the chat.
+- The FYERS login happens on FYERS' own page, never in the chat. The app secret lives in an environment
+  variable or `trader/fyers.secret`, never in the chat.

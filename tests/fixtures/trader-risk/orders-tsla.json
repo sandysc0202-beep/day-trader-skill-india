@@ -12,7 +12,7 @@
       "qty": "8",
       "type": "market",
       "time_in_force": "day",
-      "product": "MIS",
+      "product": "INTRADAY",
       "order_class": "bracket",
       "take_profit_limit_price": "370.04",
       "stop_loss_stop_price": "358.32",

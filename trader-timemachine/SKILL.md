@@ -32,7 +32,7 @@ good-looking replay does not change that.
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/timemachine.py" run                    # trader/plan.json, 10,000 replays, seed 19
 python3 "${CLAUDE_SKILL_DIR}/timemachine.py" run --write            # also save trader/timemachine.json
-python3 "${CLAUDE_SKILL_DIR}/timemachine.py" run --until 15:15      # end each replay at your flat-by time
+python3 "${CLAUDE_SKILL_DIR}/timemachine.py" run --until 15:00      # end each replay at your flat-by time
 python3 "${CLAUDE_SKILL_DIR}/timemachine.py" run --json
 python3 "${CLAUDE_SKILL_DIR}/timemachine.py" run --symbol RELIANCE --date 2026-10-19 \
     --entry 1412.40 --stop 1404.10 --target 1420.70 --entry-time "10:00 AM"
@@ -101,7 +101,7 @@ grid). A live in-progress bar is never used.
 
 1. Make sure `trader/plan.json` is today's plan from `/trader-exit`. If there
    is none, run that first, or pass the plan as flags.
-2. Run `timemachine.py run --write`. Add `--until 15:15` when the plan has a
+2. Run `timemachine.py run --write`. Add `--until 15:00` when the plan has a
    flat-by time, so "neither" means still open at the time you would get out.
 3. Tell the user, in this order: the four odds, the median and the 5 to 95
    range of the price at the close, the average R, the history line, then the
@@ -139,8 +139,8 @@ At 1R the target has to come first in half of the replays that hit one
 side. It did in 54.8 %. The replays came out close to a coin flip, and the
 real history was slightly worse than even. That is the honest answer for
 this setup, and it is what the user should hear before `/trader-budget`
-sizes it. With `--until 15:15` (the default flat-by) more replays end as
-"neither": the NSE session is 75 bars, and brokers square off intraday
+sizes it. With `--until 15:00` (the default flat-by) more replays end as
+"neither": the NSE session is 75 bars, and FYERS squares off INTRADAY
 positions before the close.
 
 ## Rules
@@ -165,12 +165,12 @@ into the pool.
 ## Safety
 
 - Education and tooling, not financial advice. A PASS is a rules check, not a recommendation.
-- Paper trading by default (`"paper": true`). Zerodha has no paper account, so paper means Claude records
-  a pretend fill and never calls Kite. Going live is the user's own decision, in their own config.
-- Nothing in this pack places an order except trader-broker, and only when all three hold: trader-risk
-  passed that exact order today, the user typed an explicit yes for that one order in the chat, and the
-  user clicked Allow once on Claude's own card because the order tool is set to "Needs approval"
-  (Customize > Connectors > tool permissions). Never set an order tool to "Always allow".
+- Paper trading by default (`"paper": true`). FYERS has no paper account, so paper means Claude records
+  a pretend fill and nothing goes to FYERS. Going live is the user's own decision, in their own config.
+- Nothing in this pack places an order except trader-broker's `ticket.py place`, and only when all three
+  hold: trader-risk passed that exact order today, the user typed an explicit yes for that one order in
+  the chat, and the user clicked Allow once on Claude's own card for that command. Never add
+  `ticket.py place` (or a FYERS MCP order tool) to an "Always allow" list.
 - No F&O, margin (MTF), short selling or leverage unless the config allows it and the user confirms.
-- The Zerodha login happens on Zerodha's own page, never in the chat. API keys, if any, live in the
-  Claude Desktop config or environment variables, never in the chat.
+- The FYERS login happens on FYERS' own page, never in the chat. The app secret lives in an environment
+  variable or `trader/fyers.secret`, never in the chat.

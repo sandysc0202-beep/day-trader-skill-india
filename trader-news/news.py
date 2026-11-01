@@ -312,12 +312,36 @@ def parse_chart(data, ticker):
             "time": _dt.datetime.fromtimestamp(when, _dt.timezone.utc) if when else None}
 
 
+def fyers_bridge():
+    """trader-broker/fyers_api.py when FYERS is today's data source (you logged in to FYERS
+    this morning, or TRADER_DATA_SOURCE=fyers), else None and Yahoo it is. FYERS' bars come
+    back in Yahoo's chart shape, so nothing else changes."""
+    folder = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "trader-broker")
+    if not os.path.isfile(os.path.join(folder, "fyers_api.py")):
+        return None
+    if folder not in sys.path:
+        sys.path.insert(0, folder)
+    try:
+        import fyers_api
+    except ImportError:
+        return None
+    return fyers_api if fyers_api.data_source() == "fyers" else None
+
+
 def collect_moves(fetcher, watch, errors=None):
     errors = [] if errors is None else errors
     out = []
     for t in sorted(watch):
         name = "chart-%s.json" % t
         try:
+            fy = None if fetcher.offline else fyers_bridge()
+            if fy:
+                try:
+                    out.append(parse_chart(fy.yahoo_compat(CHART % ("query2", urllib.parse.quote(
+                        yahoo_symbol(t), safe="-."))), t))
+                except fy.FyersError as exc:
+                    errors.append("price for %s: %s" % (t, exc))
+                continue
             try:
                 data = fetcher.get(CHART % ("query2", urllib.parse.quote(yahoo_symbol(t), safe="-.")), name)
             except NewsError as exc:

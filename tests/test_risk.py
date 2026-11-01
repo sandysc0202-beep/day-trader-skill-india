@@ -63,7 +63,7 @@ def v1_orders():
 
 
 def buy(sym, qty, product="CNC"):
-    """A whole-share market buy: NSE trades whole shares and Kite takes a quantity, never a rupee amount."""
+    """A whole-share market buy: NSE trades whole shares and FYERS takes a quantity, never a rupee amount."""
     return {"symbol": sym, "side": "buy", "qty": str(qty), "type": "market", "time_in_force": "day",
             "product": product}
 
@@ -286,13 +286,13 @@ class DayTradeChecks(unittest.TestCase):
         self.assertIn("not a rupee amount", reasons(self.one(dict(tsla(qty=None), notional="2900"))))
         self.assertIn("NSE trades whole shares", reasons(self.one(tsla(qty="8.5"))))
         self.assertIn("a bracket order needs time_in_force day", reasons(self.one(tsla(time_in_force="ioc"))))
-        self.assertIn("Kite takes day or ioc", reasons(self.one(tsla(time_in_force="gtc"))))
+        self.assertIn("FYERS takes day or ioc", reasons(self.one(tsla(time_in_force="gtc"))))
         o = tsla()
         o.pop("take_profit_limit_price")
         self.assertIn("needs both take_profit_limit_price and stop_loss_stop_price", reasons(self.one(o)))
         self.assertIn("needs a stop_loss_stop_price", reasons(self.one(dict(tsla(), stop_loss_stop_price=None,
                                                                             stop_loss_limit_price="357.00"))))
-        self.assertEqual(verdicts(self.one(tsla(stop_loss_stop_price=358.32))), ["PASS"])   # numbers are fine for Kite
+        self.assertEqual(verdicts(self.one(tsla(stop_loss_stop_price=358.32))), ["PASS"])   # numbers are fine for FYERS
 
     def test_no_extended_hours(self):
         lim = {"symbol": "KO", "side": "buy", "qty": "1", "type": "limit", "limit_price": "90",
@@ -384,7 +384,7 @@ class V1Checks(unittest.TestCase):
 
     def test_futures_and_options_off_unless_allowed(self):
         opt = {"symbol": "NIFTY26NOV24500CE", "side": "buy", "qty": "75", "type": "limit",
-               "limit_price": "12.50", "time_in_force": "day", "product": "MIS"}
+               "limit_price": "12.50", "time_in_force": "day", "product": "INTRADAY"}
         r = self.one(opt, max_order_inr=0, max_position_pct=100)
         self.assertEqual(r["verdict"], "BLOCK")
         self.assertIn("futures or options", " ".join(r["reasons"]))
@@ -401,7 +401,7 @@ class V1Checks(unittest.TestCase):
                           "time_in_force": "day"})
             self.assertNotIn("asset:", " ".join(r["reasons"]), good)
 
-    def test_format_rules_for_kite(self):
+    def test_format_rules_for_fyers(self):
         def why(o):
             return " ".join(self.one(o)["reasons"])
         self.assertIn("not a rupee amount", why({"symbol": "KO", "side": "buy", "notional": "100", "type": "market",
@@ -410,9 +410,9 @@ class V1Checks(unittest.TestCase):
         self.assertIn("no qty", why({"symbol": "KO", "side": "buy", "type": "market", "time_in_force": "day"}))
         nolimit = {"symbol": "KO", "side": "buy", "qty": "1", "type": "limit", "time_in_force": "day"}
         self.assertIn("needs a limit_price", why(nolimit))
-        self.assertIn("Kite has no trailing-stop", why(dict(buy("KO", 1), type="trailing_stop", trail_percent="1")))
-        self.assertIn("Kite takes day or ioc", why(dict(buy("KO", 1), time_in_force="gtc")))
-        self.assertIn("MIS (intraday) or CNC", why(dict(buy("KO", 1), product="NRML")))
+        self.assertIn("FYERS has no trailing-stop", why(dict(buy("KO", 1), type="trailing_stop", trail_percent="1")))
+        self.assertIn("FYERS takes day or ioc", why(dict(buy("KO", 1), time_in_force="gtc")))
+        self.assertIn("INTRADAY or CNC", why(dict(buy("KO", 1), product="NRML")))
         self.assertIn("NSE only", why(dict(buy("KO", 1), exchange="BSE")))
         self.assertIn("side must be buy or sell", why({"symbol": "KO", "side": "hold", "qty": "1"}))
         self.assertEqual(self.one(dict(buy("KO", 1), time_in_force="ioc"))["verdict"], "PASS")

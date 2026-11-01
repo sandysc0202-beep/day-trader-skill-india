@@ -18,16 +18,16 @@ NOW = "2026-10-19 10:00"
 TODAY = "2026-10-19"
 AAPL = {"symbol": "AAPL", "side": "buy", "qty": "3", "type": "market", "time_in_force": "day", "product": "CNC"}
 BATCH = ["AAPL", "AXP", "GOOGL", "KO", "BAC"]
-TSLA_ORDER = {"symbol": "TSLA", "side": "buy", "qty": "8", "type": "market", "time_in_force": "day", "product": "MIS",
-              "order_class": "bracket", "take_profit_limit_price": "370.04", "stop_loss_stop_price": "358.32"}
-# exactly what Claude sends to the Kite MCP server's place_order: the entry only
-TSLA_CALL = {"variety": "regular", "exchange": "NSE", "tradingsymbol": "TSLA", "transaction_type": "BUY",
-             "quantity": 8, "product": "MIS", "order_type": "MARKET", "validity": "DAY"}
-TSLA_STOP_CALL = {"variety": "regular", "exchange": "NSE", "tradingsymbol": "TSLA", "transaction_type": "SELL",
-                  "quantity": 8, "product": "MIS", "order_type": "SL-M", "validity": "DAY", "trigger_price": 358.32}
+TSLA_ORDER = {"symbol": "TSLA", "side": "buy", "qty": "8", "type": "market", "time_in_force": "day",
+              "product": "INTRADAY", "order_class": "bracket", "take_profit_limit_price": "370.04",
+              "stop_loss_stop_price": "358.32"}
+# exactly the body FYERS' Single Order API gets: the entry only
+TSLA_CALL = {"symbol": "NSE:TSLA-EQ", "qty": 8, "type": 2, "side": 1, "productType": "INTRADAY", "limitPrice": 0,
+             "stopPrice": 0, "validity": "DAY", "disclosedQty": 0, "offlineOrder": False, "orderTag": "daytrader"}
+TSLA_STOP_CALL = dict(TSLA_CALL, type=3, side=-1, stopPrice=358.32)
 TSLA_PLAIN = ("BUY 8 TSLA, market, good for today / stop-loss 358.32 / target 370.04 (trader-alerts watches it; "
-              "Kite holds no target order) / max loss about ₹46.88 if the stop fills at 358.32 (it can fill worse "
-              "in a fast market)")
+              "no target order sits at FYERS) / max loss about ₹46.88 if the stop fills at 358.32 (it can fill "
+              "worse in a fast market)")
 
 
 def tsla(**over):
@@ -74,19 +74,19 @@ class ExplicitYes(unittest.TestCase):
 
 
 class TicketShape(unittest.TestCase):
-    def test_tool_input_is_the_kite_call(self):
+    def test_tool_input_is_the_fyers_body(self):
         o = dict(AAPL, why="from a list")
-        self.assertEqual(ticket.tool_input(o),
-                         {"variety": "regular", "exchange": "NSE", "tradingsymbol": "AAPL", "transaction_type": "BUY",
-                          "quantity": 3, "product": "CNC", "order_type": "MARKET", "validity": "DAY"})
+        self.assertEqual(ticket.tool_input(o), dict(TSLA_CALL, symbol="NSE:AAPL-EQ", qty=3, productType="CNC"))
         self.assertEqual(ticket.tool_input({"symbol": "M&M", "side": "sell", "qty": 3, "type": "limit",
-                                            "limit_price": "3089.5", "time_in_force": "ioc", "product": "MIS"}),
-                         {"variety": "regular", "exchange": "NSE", "tradingsymbol": "M&M", "transaction_type": "SELL",
-                          "quantity": 3, "product": "MIS", "order_type": "LIMIT", "validity": "IOC", "price": 3089.5})
+                                            "limit_price": "3089.5", "time_in_force": "ioc", "product": "INTRADAY"}),
+                         dict(TSLA_CALL, symbol="NSE:M&M-EQ", qty=3, type=1, side=-1, limitPrice=3089.5,
+                              validity="IOC"))
         stop = ticket.tool_input({"symbol": "KO", "side": "sell", "qty": "2", "type": "stop_limit",
                                   "stop_price": "88.10", "limit_price": "88.00"})
-        self.assertEqual((stop["order_type"], stop["trigger_price"], stop["price"], stop["product"]),
-                         ("SL", 88.1, 88.0, "MIS"))
+        self.assertEqual((stop["type"], stop["stopPrice"], stop["limitPrice"], stop["productType"]),
+                         (4, 88.1, 88.0, "INTRADAY"))
+        bad = ticket.tool_input({"symbol": "KO", "side": "buy", "qty": "1.5", "type": "market"})
+        self.assertIn("whole shares", bad["error"])
 
     def test_the_bracket_call_is_the_entry_and_leaves_out_why_and_plan(self):
         self.assertEqual(ticket.tool_input(tsla()), TSLA_CALL)
@@ -100,9 +100,9 @@ class TicketShape(unittest.TestCase):
                                        "limit_price": "95", "time_in_force": "ioc"}),
                          "SELL 1 share of KO, limit order at ₹95, immediate or cancel")
         self.assertEqual(ticket.plain({"symbol": "KO", "side": "sell", "qty": "2", "type": "stop",
-                                       "stop_price": "88.1", "time_in_force": "day", "product": "MIS"}),
+                                       "stop_price": "88.1", "time_in_force": "day", "product": "INTRADAY"}),
                          "SELL 2 shares of KO, stop-loss market (SL-M) order, trigger ₹88.10, good for today, "
-                         "intraday (MIS)")
+                         "intraday (INTRADAY)")
         self.assertEqual(ticket.plain(tsla()), TSLA_PLAIN)
         lim = tsla(type="limit", limit_price="364.00")
         self.assertEqual(ticket.plain(lim).split(" / ")[0], "BUY 8 TSLA, limit 364.00, good for today")
@@ -112,12 +112,12 @@ class TicketShape(unittest.TestCase):
 
 
 class DesktopConfig(unittest.TestCase):
-    def test_example_is_zerodhas_kite_mcp_with_no_keys(self):
+    def test_example_is_the_fyers_mcp_with_no_keys(self):
         with open(os.path.join(ROOT, "trader-broker", "claude_desktop_config.example.json")) as fh:
-            server = json.load(fh)["mcpServers"]["kite"]
+            server = json.load(fh)["mcpServers"]["fyers"]
         self.assertEqual(server["command"], "npx")
-        self.assertIn("https://mcp.kite.trade/mcp", server["args"])
-        self.assertNotIn("env", server)                    # Kite's login happens in the browser, never in a file
+        self.assertIn("https://mcp.fyers.in/mcp", server["args"])
+        self.assertNotIn("env", server)                    # FYERS' login happens in the browser, never in a file
 
 
 class Flow(unittest.TestCase):
@@ -169,12 +169,12 @@ class Flow(unittest.TestCase):
         self.assertEqual(self.run_risk(), 0)
         code, text, _ = run(self.args("show", "--index", "1"))
         self.assertEqual(code, 0)
-        self.assertIn("ORDER 1 of 1, LIVE ACCOUNT, REAL MONEY, Zerodha Kite", text)
+        self.assertIn("ORDER 1 of 1, LIVE ACCOUNT, REAL MONEY, FYERS", text)
         for part in TSLA_PLAIN.split(" / "):
             self.assertIn("  " + part + "\n", text)
         self.assertIn("READY: trader-risk PASS", text)
-        self.assertIn("Claude will call place_order with exactly:", text)
-        self.assertIn('"order_type": "MARKET"', text)
+        self.assertIn("After your yes, ticket.py place sends FYERS (POST /api/v3/orders/sync) exactly:", text)
+        self.assertIn('"productType": "INTRADAY"', text)
         self.assertIn("ticket.py protect writes the stop-loss (an SL-M sell at 358.32)", text)
         self.assertIn("could both fill and leave you short", text)
         self.assertNotIn('"plan"', text)
@@ -188,7 +188,7 @@ class Flow(unittest.TestCase):
 
         code, text, _ = run(self.args("approve", "--index", "1", "--reply", "yes"))
         self.assertEqual(code, 0)
-        self.assertIn("Now call place_order", text)
+        self.assertIn("Now send it: ticket.py place --index 1", text)
         self.assertEqual(json.loads(text[text.index("{"):text.rindex("}") + 1]), TSLA_CALL)
         code, _, err = run(self.args("approve", "--index", "1", "--reply", "yes"))
         self.assertEqual(code, 1)
@@ -232,16 +232,24 @@ class Flow(unittest.TestCase):
         with open(self.risk) as fh:
             self.assertEqual(json.load(fh)["results"][0]["kind"], "exit")
 
-    def test_paper_never_calls_kite(self):
+    def test_paper_never_calls_fyers(self):
         self.assertEqual(self.run_risk(), 0)
         code, text, _ = run(self.args("show", "--index", "1"))
-        self.assertIn("ORDER 1 of 1, PAPER (nothing goes to Zerodha), Zerodha Kite", text)
-        self.assertIn("Paper: Claude does not call Kite", text)
+        self.assertIn("ORDER 1 of 1, PAPER (nothing goes to FYERS), FYERS", text)
+        self.assertIn("Paper: nothing goes to FYERS", text)
         self.assertNotIn("Allow once", text)
         code, text, _ = run(self.args("approve", "--index", "1", "--reply", "yes"))
         self.assertEqual(code, 0)
-        self.assertIn("do not call Kite", text)
-        self.assertNotIn("Now call place_order", text)
+        self.assertIn("Paper: nothing goes to FYERS", text)
+        self.assertNotIn("Now send it", text)
+        sent = []
+        ticket.PLACE = lambda body: sent.append(body)
+        try:
+            code, _, err = run(self.args("place", "--index", "1"))
+        finally:
+            ticket.PLACE = ticket.fyers_api.place_order
+        self.assertEqual((code, sent), (1, []))
+        self.assertIn("\"paper\" is true", err)
         code, _, err = run(self.args("result", "--index", "1", "--status", "paper"))
         self.assertEqual(code, 1)
         self.assertIn("needs --filled-qty and --filled-price", err)
@@ -261,15 +269,14 @@ class Flow(unittest.TestCase):
         code, text, _ = run(["flatten", "--symbol", "TSLA", "--orders", self.orders, "--portfolio", self.pf,
                              "--plan", PLAN_PATH, "--config", self.cfg, "--now", late])
         self.assertEqual(code, 0)
-        self.assertIn("SELL 8 shares of TSLA, market order, good for today, intraday (MIS) (flat by 15:15 IST)", text)
+        self.assertIn("SELL 8 shares of TSLA, market order, good for today, intraday (INTRADAY) (flat by 15:15 IST)",
+                      text)
         self.assertIn("replaced 1 earlier proposal", text)
         self.assertIn("cancel it FIRST", text)
-        self.assertIn("cancel_order", text)
+        self.assertIn("ticket.py cancel --broker-id", text)
         with open(self.orders) as fh:
             doc = json.load(fh)
-        self.assertEqual(ticket.tool_input(doc["orders"][0]),
-                         {"variety": "regular", "exchange": "NSE", "tradingsymbol": "TSLA", "transaction_type": "SELL",
-                          "quantity": 8, "product": "MIS", "order_type": "MARKET", "validity": "DAY"})
+        self.assertEqual(ticket.tool_input(doc["orders"][0]), dict(TSLA_CALL, side=-1))
         self.assertEqual(self.run_risk(now=late), 0)       # at the 15:15 entry cutoff: an exit still passes
         with open(self.risk) as fh:
             self.assertEqual(json.load(fh)["results"][0]["kind"], "exit")
@@ -293,7 +300,7 @@ class Flow(unittest.TestCase):
         code, text, _ = run(["flatten", "--symbol", "tsla", "--qty", "8", "--orders", self.orders,
                              "--portfolio", self.none, "--plan", self.none, "--config", self.cfg, "--now", NOW])
         self.assertEqual(code, 0)
-        self.assertNotIn("Check it against get_positions", text)
+        self.assertNotIn("Check it against FYERS", text)
         self.assertEqual(run(["flatten", "--symbol", "TSLA", "--qty", "0", "--orders", self.orders])[0], 1)
 
     def test_an_edited_order_is_not_ready(self):
@@ -363,6 +370,98 @@ class Flow(unittest.TestCase):
                             "--portfolio", self.pf, "--config", self.cfg, "--state", self.state])
         self.assertEqual(code, 1)
         self.assertNotIn("Traceback", err)
+
+
+class LivePlace(unittest.TestCase):
+    """ticket.py place: the only command that sends an order, with FYERS swapped for a fake."""
+
+    def setUp(self):
+        Flow.setUp(self)
+        Flow.live(self)
+        self.sent, self.cancelled = [], []
+        self.book = []
+
+        def place(body):
+            self.sent.append(body)
+            return {"id": "26101900012345", "message": "Order submitted successfully"}
+
+        ticket.PLACE = place
+        ticket.CANCEL = lambda oid: self.cancelled.append(oid) or {"id": oid, "message": "cancelled"}
+        ticket.ORDERBOOK = lambda: self.book
+        ticket.SLEEP = lambda s: None
+
+    def tearDown(self):
+        ticket.PLACE, ticket.CANCEL = ticket.fyers_api.place_order, ticket.fyers_api.cancel_order
+        ticket.ORDERBOOK = ticket.fyers_api.orderbook
+        shutil.rmtree(self.d)
+
+    args = Flow.args
+    run_risk = Flow.run_risk
+    state_doc = Flow.state_doc
+
+    def test_no_yes_no_order(self):
+        self.run_risk()
+        code, _, err = run(self.args("place", "--index", "1"))
+        self.assertEqual((code, self.sent), (1, []))
+        self.assertIn("no unused yes", err)
+
+    def test_no_risk_pass_no_order(self):
+        code, _, err = run(self.args("place", "--index", "1"))
+        self.assertEqual((code, self.sent), (1, []))
+        self.assertIn("no trader-risk PASS", err)
+
+    def test_place_records_the_id_and_the_fill_once(self):
+        self.run_risk()
+        run(self.args("approve", "--index", "1", "--reply", "yes"))
+        self.book = [{"id": "26101900012345", "status": 2, "status_word": "filled", "filledQty": 8,
+                      "tradedPrice": 364.2}]
+        code, text, _ = run(self.args("place", "--index", "1", "--portfolio", self.pf))
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.sent, [TSLA_CALL])
+        self.assertIn("order id 26101900012345", text)
+        self.assertIn("ticket.py protect --symbol TSLA --qty 8", text)
+        self.assertEqual([r["status"] for r in self.state_doc()["orders"]], ["approved", "placed", "filled"])
+        with open(self.pf) as fh:
+            self.assertEqual(json.load(fh)["cash"], 2086.4)
+        code, _, err = run(self.args("place", "--index", "1", "--portfolio", self.pf))
+        self.assertEqual((code, len(self.sent)), (1, 1))      # the yes is used up: no second order
+
+    def test_a_refusal_is_recorded_as_failed(self):
+        self.run_risk()
+        run(self.args("approve", "--index", "1", "--reply", "yes"))
+
+        def refuse(body):
+            raise ticket.fyers_api.FyersError("FYERS: Order rejected: static IP not registered [code -50]")
+
+        ticket.PLACE = refuse
+        code, text, _ = run(self.args("place", "--index", "1", "--portfolio", self.pf))
+        self.assertEqual(code, 1)
+        self.assertIn("static IP", text)
+        self.assertEqual(self.state_doc()["orders"][-1]["status"], "failed")
+
+    def test_the_stop_is_found_and_cancelled_before_a_flatten(self):
+        self.run_risk()
+        run(self.args("approve", "--index", "1", "--reply", "yes"))
+        self.book = [{"id": "26101900012345", "status": 2, "status_word": "filled", "filledQty": 8,
+                      "tradedPrice": 364.2}]
+        run(self.args("place", "--index", "1", "--portfolio", self.pf))
+        run(["protect", "--symbol", "TSLA", "--orders", self.orders, "--portfolio", self.pf, "--plan", PLAN_PATH,
+             "--config", self.cfg, "--now", "2026-10-19 10:02"])
+        self.run_risk(now="2026-10-19 10:02")
+        run(self.args("approve", "--index", "1", "--reply", "yes", now="2026-10-19 10:02"))
+        self.book = [{"id": "26101900012345", "status": 6, "status_word": "pending"}]
+        code, text, _ = run(self.args("place", "--index", "1", "--portfolio", self.pf, now="2026-10-19 10:02"))
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.sent[-1], TSLA_STOP_CALL)
+        self.assertIn("Status at FYERS: pending", text)
+        code, text, _ = run(["flatten", "--symbol", "TSLA", "--orders", self.orders, "--portfolio", self.pf,
+                             "--plan", PLAN_PATH, "--config", self.cfg, "--state", self.state,
+                             "--now", "2026-10-19 14:59"])
+        self.assertIn("is open at FYERS (order 26101900012345)", text)
+        code, text, _ = run(["cancel", "--broker-id", "26101900012345", "--config", self.cfg, "--state", self.state,
+                             "--now", "2026-10-19 14:59"])
+        self.assertEqual((code, self.cancelled), (0, ["26101900012345"]))
+        self.assertIsNone(ticket.open_stop_id(self.state_doc(), "TSLA", TODAY))
 
 
 if __name__ == "__main__":

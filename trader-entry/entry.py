@@ -31,7 +31,7 @@ on a 1:00 p.m. early close the cutoff moves up three hours with the close);
 no-data (the market is closed today or Yahoo sent no bars).
 
 trader/config.json (optional): "no_entries_before" (09:30) and
-"no_entries_after" (15:00), India time (IST).
+"no_entries_after" (14:45), India time (IST).
 
 watch wakes just after each bar closes (bars only change then), re-polls every
 --every seconds (default 30) while Yahoo has not posted the new bar, prints one
@@ -69,7 +69,7 @@ GRACE = 2        # seconds after a bar closes before watch asks for it
 SETTLE = 60      # seconds a closed bar may wait for Yahoo's data to catch up
 HOSTS = ("query2", "query1")
 INTERVALS = {"1m": 60, "5m": 300}
-DEFAULTS = {"no_entries_before": "09:30", "no_entries_after": "15:00"}
+DEFAULTS = {"no_entries_before": "09:30", "no_entries_after": "14:45"}
 EPOCH = datetime.datetime(1970, 1, 1)
 
 NSE_HOLIDAYS = {  # equity segment, weekdays only; from NSE's 2026 holiday circular
@@ -243,9 +243,32 @@ def _sleep(seconds):
     time.sleep(seconds)
 
 
+def fyers_bridge():
+    """trader-broker/fyers_api.py when FYERS is today's data source (you logged in to FYERS
+    this morning, or TRADER_DATA_SOURCE=fyers), else None and Yahoo it is. FYERS' bars come
+    back in Yahoo's chart shape, so nothing else changes."""
+    folder = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "trader-broker")
+    if not os.path.isfile(os.path.join(folder, "fyers_api.py")):
+        return None
+    if folder not in sys.path:
+        sys.path.insert(0, folder)
+    try:
+        import fyers_api
+    except ImportError:
+        return None
+    return fyers_api if fyers_api.data_source() == "fyers" else None
+
+
 def yahoo_get(path):
     """GET a Yahoo path: query2 first, query1 when query2 answers 429 or 5xx.
-    An HTTP 429 gets one retry on the same host after BACKOFF seconds."""
+    An HTTP 429 gets one retry on the same host after BACKOFF seconds.
+    When FYERS is the data source, the same answer comes from FYERS instead."""
+    fy = fyers_bridge()
+    if fy:
+        try:
+            return fy.yahoo_compat(path)
+        except fy.FyersError as e:
+            raise EntryError(str(e))
     last = "no answer"
     for host in HOSTS:
         url = "https://%s.finance.yahoo.com%s" % (host, path)
@@ -755,7 +778,7 @@ def watch_loop(provider, clock, sleep, emit, opts, every=30, until=None, max_err
         else:
             nxt = open_dt + datetime.timedelta(seconds=(cur_slot + 1) * step + GRACE)
             wait = (nxt - local).total_seconds()
-        cutoff = datetime.datetime.combine(day, parse_hhmm(res.get("no_entries_after") or "15:00", "cutoff"))
+        cutoff = datetime.datetime.combine(day, parse_hhmm(res.get("no_entries_after") or "14:45", "cutoff"))
         for stop_at in (until, cutoff, close_dt):
             if stop_at and stop_at > local:
                 wait = min(wait, (stop_at - local).total_seconds())

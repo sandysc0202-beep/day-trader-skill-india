@@ -49,7 +49,7 @@ reason is one plain line).
 | --- | --- |
 | `trader/universe.txt` | written by `universe`: one `SYMBOL\|Name` a line, read by `daily` and `orb`, and by trader-news and trader-analyst to match NSE filings to a symbol by company name |
 | `trader/watchlist.json` | written by `daily` and `orb`: `mode`, `as_of`, `universe`, `scanned`, `failed`, `hits[]`. trader-news and trader-entry read `hits[].symbol` |
-| `trader/config.json` | read by `orb`: `no_entries_after` (default 15:00) |
+| `trader/config.json` | read by `orb`: `no_entries_after` (default 14:45) |
 
 ## The universe
 
@@ -134,6 +134,11 @@ left out as unusable.
 - Yahoo's chart and spark endpoints are free, unofficial and can lag. Bars are
   5-minute bars, bar by bar, never tick by tick. query2 first, query1 on a 429
   or 5xx, one retry after a 5-second wait on a 429.
+- **FYERS instead of Yahoo.** After the morning FYERS login (trader-broker
+  `fyers_api.py login`) the bars come from FYERS: official and free, but 50
+  data calls a minute, so a FYERS scan takes a watchlist of up to 40 symbols
+  (`--symbols` or `--watchlist`). For the whole market, run the scan with
+  `TRADER_DATA_SOURCE=yahoo`.
 - Partial results are said as partial: "Fetched 1,980 of 2,050 charts (70
   failed or had no data)". Never round a partial scan up to "the whole market".
 - NSE's 2026 trading holidays are in the calendar (NSE has no half days). Add
@@ -189,12 +194,12 @@ never calls data real time, and never promises that a setup works.
 ## Safety
 
 - Education and tooling, not financial advice. A PASS is a rules check, not a recommendation.
-- Paper trading by default (`"paper": true`). Zerodha has no paper account, so paper means Claude records
-  a pretend fill and never calls Kite. Going live is the user's own decision, in their own config.
-- Nothing in this pack places an order except trader-broker, and only when all three hold: trader-risk
-  passed that exact order today, the user typed an explicit yes for that one order in the chat, and the
-  user clicked Allow once on Claude's own card because the order tool is set to "Needs approval"
-  (Customize > Connectors > tool permissions). Never set an order tool to "Always allow".
+- Paper trading by default (`"paper": true`). FYERS has no paper account, so paper means Claude records
+  a pretend fill and nothing goes to FYERS. Going live is the user's own decision, in their own config.
+- Nothing in this pack places an order except trader-broker's `ticket.py place`, and only when all three
+  hold: trader-risk passed that exact order today, the user typed an explicit yes for that one order in
+  the chat, and the user clicked Allow once on Claude's own card for that command. Never add
+  `ticket.py place` (or a FYERS MCP order tool) to an "Always allow" list.
 - No F&O, margin (MTF), short selling or leverage unless the config allows it and the user confirms.
-- The Zerodha login happens on Zerodha's own page, never in the chat. API keys, if any, live in the
-  Claude Desktop config or environment variables, never in the chat.
+- The FYERS login happens on FYERS' own page, never in the chat. The app secret lives in an environment
+  variable or `trader/fyers.secret`, never in the chat.

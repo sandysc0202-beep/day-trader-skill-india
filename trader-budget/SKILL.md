@@ -5,9 +5,9 @@ description: >-
   trade. Reads the trade plan from trader-exit (entry, stop, target), finds
   the whole shares that fit inside four limits (max loss per trade, position
   cap, max order, cash after your buffer), says which limit decided it, and
-  writes ONE intraday (MIS) bracket order (entry, stop-loss, take-profit) to
-  trader/orders.json for NSE, which trader-broker turns into Zerodha Kite
-  orders. A stop too far away for your max loss is a plain refusal, not a
+  writes ONE intraday (INTRADAY) bracket order (entry, stop-loss, take-profit)
+  to trader/orders.json for NSE, which trader-broker sends to FYERS after your
+  yes. A stop too far away for your max loss is a plain refusal, not a
   smaller order. Nothing is placed. Use when the user says "how many shares",
   "size this trade", "how much should I buy", "I have ₹1 lakh", "I only want
   to risk ₹500 a trade", "set my rules", "keep 10% in cash", or after
@@ -59,14 +59,15 @@ If `trader/config.json` does not exist, copy `config.example.json` into
   budget), the biggest order (₹50,000) and the smallest order (₹100).
 - The day limits trader-risk enforces: **max_daily_loss_inr** (₹1,500), **max_trades_per_day** (3),
   **min_reward_risk** (1.0), **require_stop** (true), **no_entries_before** / **no_entries_after**
-  ("09:30" / "15:00") and **flat_by** ("15:15"), all India time (IST).
-- **tick_size**: leave it blank to use NSE's price bands; set it to the step Kite shows if a
+  ("09:30" / "14:45") and **flat_by** ("15:00"), all India time (IST). FYERS squares off
+  INTRADAY positions itself from 3:05 PM for stocks with F&O contracts.
+- **tick_size**: leave it blank to use NSE's price bands; set it to the step FYERS shows if a
   stock's band differs.
 - **blocked**: symbols they never want to trade.
-- Keep **paper** true until they have watched it work: Zerodha has no paper account, so paper
+- Keep **paper** true until they have watched it work: FYERS has no paper account, so paper
   means pretend fills recorded here.
 
-The size uses cash only. Brokers give intraday (MIS) leverage; this pack
+The size uses cash only. Brokers give intraday leverage; this pack
 never sizes on it.
 
 ## Step 2: size the trade
@@ -120,7 +121,7 @@ loss.
 85 shares = ₹30,955.30. Max loss at the stop: 85 x 5.86 = ₹498.10. It writes:
 
 ```json
-{"symbol": "TSLA", "side": "buy", "qty": "85", "type": "market", "time_in_force": "day", "product": "MIS",
+{"symbol": "TSLA", "side": "buy", "qty": "85", "type": "market", "time_in_force": "day", "product": "INTRADAY",
  "order_class": "bracket", "take_profit_limit_price": "370.04", "stop_loss_stop_price": "358.32",
  "why": "opening-range breakout on TSLA: 85 shares, bound by your ₹500 max loss per trade (85 x 5.86 = ₹498.10 at the stop)",
  "plan": {"entry": 364.18, "stop": 358.32, "target": 370.04, "risk_per_share": 5.86, "max_loss": 498.1,
@@ -128,10 +129,9 @@ loss.
 ```
 
 `why` and `plan` are notes for trader-risk and trader-broker. They are never
-sent to Kite. trader-broker sends the entry as a Kite MARKET order with
-product MIS; the stop-loss follows as its own SL-M ticket once the entry
-fills (Kite has no bracket order for shares), and trader-alerts watches the
-target. With the stop at 300.00 instead, one share would risk 64.18 and the
+sent to FYERS. trader-broker sends the entry as a FYERS market order with
+product INTRADAY; the stop-loss follows as its own SL-M ticket once the entry
+fills, and trader-alerts watches the target. With the stop at 300.00 instead, one share would risk 64.18 and the
 same rules buy 7: a stop that far is allowed, just smaller. With the tests'
 small account (₹5,000 budget, ₹50 max loss) it is 8 shares and a refusal at
 300.00. If the price has run to 366.48 by the time it sizes, reward:risk
@@ -147,7 +147,7 @@ comes off the top, weights are renormalised to 100, any stock over
 `max_position_pct` is pinned at the cap and its excess shared out, slices
 under the minimum order are dropped, and whole shares are bought at the
 prices in `--prices trader/prices.json` (trader-alerts `quote --holdings
---write` gets them). NSE has no fractional shares and Kite takes a quantity,
+--write` gets them). NSE has no fractional shares and FYERS takes a quantity,
 never a rupee amount, so without prices it shows the rupee split and writes
 no orders. These are plain buys with no stop: trader-risk blocks them while
 `require_stop` is true and counts each one against `max_trades_per_day`. Use
@@ -170,12 +170,12 @@ margin or short positions.
 ## Safety
 
 - Education and tooling, not financial advice. A PASS is a rules check, not a recommendation.
-- Paper trading by default (`"paper": true`). Zerodha has no paper account, so paper means Claude records
-  a pretend fill and never calls Kite. Going live is the user's own decision, in their own config.
-- Nothing in this pack places an order except trader-broker, and only when all three hold: trader-risk
-  passed that exact order today, the user typed an explicit yes for that one order in the chat, and the
-  user clicked Allow once on Claude's own card because the order tool is set to "Needs approval"
-  (Customize > Connectors > tool permissions). Never set an order tool to "Always allow".
+- Paper trading by default (`"paper": true`). FYERS has no paper account, so paper means Claude records
+  a pretend fill and nothing goes to FYERS. Going live is the user's own decision, in their own config.
+- Nothing in this pack places an order except trader-broker's `ticket.py place`, and only when all three
+  hold: trader-risk passed that exact order today, the user typed an explicit yes for that one order in
+  the chat, and the user clicked Allow once on Claude's own card for that command. Never add
+  `ticket.py place` (or a FYERS MCP order tool) to an "Always allow" list.
 - No F&O, margin (MTF), short selling or leverage unless the config allows it and the user confirms.
-- The Zerodha login happens on Zerodha's own page, never in the chat. API keys, if any, live in the
-  Claude Desktop config or environment variables, never in the chat.
+- The FYERS login happens on FYERS' own page, never in the chat. The app secret lives in an environment
+  variable or `trader/fyers.secret`, never in the chat.

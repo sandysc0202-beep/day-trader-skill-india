@@ -233,9 +233,32 @@ def fetch(url, timeout=20):
     return text
 
 
+def fyers_bridge():
+    """trader-broker/fyers_api.py when FYERS is today's data source (you logged in to FYERS
+    this morning, or TRADER_DATA_SOURCE=fyers), else None and Yahoo it is. FYERS' bars come
+    back in Yahoo's chart shape, so nothing else changes."""
+    folder = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "trader-broker")
+    if not os.path.isfile(os.path.join(folder, "fyers_api.py")):
+        return None
+    if folder not in sys.path:
+        sys.path.insert(0, folder)
+    try:
+        import fyers_api
+    except ImportError:
+        return None
+    return fyers_api if fyers_api.data_source() == "fyers" else None
+
+
 def fetch_yahoo(sym, timeout=20):
     """query2 first. A 429 waits BACKOFF seconds and tries once more; a 429 or a 5xx
-    after that moves on to query1. A 404 comes back as Yahoo's own error JSON."""
+    after that moves on to query1. A 404 comes back as Yahoo's own error JSON.
+    When FYERS is the data source, the quote comes from FYERS instead."""
+    fy = fyers_bridge()
+    if fy:
+        try:
+            return fy.yahoo_compat(yahoo_url(sym, YAHOO_HOSTS[0]))
+        except fy.FyersError as e:
+            raise AlertError(str(e))
     last = None
     for host in YAHOO_HOSTS:
         url = yahoo_url(sym, host)
@@ -464,7 +487,7 @@ def rules_from_plan(plan, cfg_flat_by=None):
         label = plan.get("%s_label" % key)
         out.append({"id": "%s-plan-%s" % (sym.lower(), key), "symbol": sym, "type": typ, "price": float(v),
                     "note": word + (": " + label if label else "")})
-    flat = plan.get("flat_by") or cfg_flat_by or "15:15"
+    flat = plan.get("flat_by") or cfg_flat_by or "15:00"
     if _hhmm(flat) is None:
         raise AlertError("the plan's flat_by %r is not a time like 15:15" % flat)
     out.append({"id": "%s-flat-by" % sym.lower(), "symbol": sym, "type": "time", "at": flat,
@@ -571,7 +594,7 @@ def cmd_check(a):
             print("error: " + e)
         if rings:
             print("An alert is information, not an order. Only the stop-loss (the SL-M order from ticket.py "
-                  "protect) sits at Zerodha; Kite holds no target. Check get_positions and record any fill "
+                  "protect) sits at FYERS; no target order sits there. Check fyers_api.py positions and record any fill "
                   "(ticket.py fill). To close a position yourself: cancel the open stop-loss, then ticket.py "
                   "flatten, trader-risk and your yes.")
     return 0 if rings else 1
@@ -597,7 +620,7 @@ def cmd_add(a):
         for r in new:
             print("Added %s: %s" % (r["id"], json.dumps(r)))
         print("Run alerts.py check every few minutes while the trade is open (a scheduled task or /loop). "
-              "Free quotes are delayed; the SL-M stop-loss at Zerodha (ticket.py protect) is what actually "
+              "Free quotes are delayed; the SL-M stop-loss at FYERS (ticket.py protect) is what actually "
               "stops you out, and nothing at the broker takes the target for you.")
         return 0
     if a.opening_bell:

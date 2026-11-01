@@ -9,7 +9,7 @@ description: >-
   more than your trades per day, and no new entries outside your entry
   window or when the market is closed. It also keeps the basics: blocked
   symbols, order size, position cap, cash buffer, margin, short sales, F&O,
-  orders Zerodha Kite cannot take (a rupee amount instead of shares,
+  orders FYERS cannot take (a rupee amount instead of shares,
   fractions, trailing stops, gtc), prices off NSE's tick, duplicates and a
   daily order limit. Getting out is never blocked by a day limit. Prints PASS or
   BLOCK with the reason and records the verdicts so trader-broker only shows
@@ -62,7 +62,7 @@ batch that is fine order by order but breaks a limit together is caught.
 
 | check | blocks when |
 | --- | --- |
-| format | no symbol, side not buy or sell, no qty or a qty that is not whole shares (NSE has no fractions), a rupee amount (`notional`: Kite takes a quantity), a limit order with no limit price, a trailing stop (Kite has none), a validity other than `day` or `ioc`, extended hours, a product other than `MIS` (intraday) or `CNC` (delivery), an exchange other than NSE; a bracket that is not `day` or misses its stop-loss or take-profit |
+| format | no symbol, side not buy or sell, no qty or a qty that is not whole shares (NSE has no fractions), a rupee amount (`notional`: FYERS takes a quantity), a limit order with no limit price, a trailing stop (FYERS has none), a validity other than `day` or `ioc`, extended hours, a product other than `INTRADAY` or `CNC` (delivery), an exchange other than NSE; a bracket that is not `day` or misses its stop-loss or take-profit |
 | asset | a futures or options contract (`NIFTY26NOV24500CE`, `RELIANCE26NOVFUT`) while `allow_options` is false; crypto or anything that does not look like an NSE share symbol |
 | short | a sell of more than you hold (`allow_short` false) |
 | blocked | (entries) the symbol is on the `blocked` list |
@@ -94,7 +94,7 @@ How the numbers work:
   to switch the window off.
 - **NSE's tick.** A limit, trigger, stop-loss or target price that is not on
   the stock's tick (₹0.05 for a share between ₹250 and ₹1,000, for example)
-  is a warning: Kite may reject it. NSE assigns each stock its band from a
+  is a warning: FYERS may reject it. NSE assigns each stock its band from a
   reference price, so `"tick_size"` in the config overrides the guess.
 - **pdt_guard** (off by default) counts a day trade as a symbol bought and
   sold on the same day in the log, plus any entry placed today. India has no
@@ -148,7 +148,7 @@ BLOCK #1 buy TSLA 9 shares, entry
 The same 8 shares checked at 10:40 with the 10:37 quote (366.48) in
 `trader/prices.json` are blocked twice: 8 x 8.16 = ₹65.28 at the stop, and
 reward:risk 0.44. At 9:25 they are blocked by the window (no new entries
-before 9:30). The 3:15 PM sell that closes the position passes, even at the
+before 9:30). The 3:00 PM sell that closes the position passes, even at the
 entry cutoff: it is an exit, and so is the SL-M stop-loss ticket from
 trader-broker `protect`.
 
@@ -168,12 +168,12 @@ treats a PASS as the user's yes.
 ## Safety
 
 - Education and tooling, not financial advice. A PASS is a rules check, not a recommendation.
-- Paper trading by default (`"paper": true`). Zerodha has no paper account, so paper means Claude records
-  a pretend fill and never calls Kite. Going live is the user's own decision, in their own config.
-- Nothing in this pack places an order except trader-broker, and only when all three hold: trader-risk
-  passed that exact order today, the user typed an explicit yes for that one order in the chat, and the
-  user clicked Allow once on Claude's own card because the order tool is set to "Needs approval"
-  (Customize > Connectors > tool permissions). Never set an order tool to "Always allow".
+- Paper trading by default (`"paper": true`). FYERS has no paper account, so paper means Claude records
+  a pretend fill and nothing goes to FYERS. Going live is the user's own decision, in their own config.
+- Nothing in this pack places an order except trader-broker's `ticket.py place`, and only when all three
+  hold: trader-risk passed that exact order today, the user typed an explicit yes for that one order in
+  the chat, and the user clicked Allow once on Claude's own card for that command. Never add
+  `ticket.py place` (or a FYERS MCP order tool) to an "Always allow" list.
 - No F&O, margin (MTF), short selling or leverage unless the config allows it and the user confirms.
-- The Zerodha login happens on Zerodha's own page, never in the chat. API keys, if any, live in the
-  Claude Desktop config or environment variables, never in the chat.
+- The FYERS login happens on FYERS' own page, never in the chat. The app secret lives in an environment
+  variable or `trader/fyers.secret`, never in the chat.

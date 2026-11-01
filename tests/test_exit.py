@@ -23,7 +23,7 @@ REEL_PLAN = {"created_by": "trader-exit", "symbol": "TSLA", "side": "buy", "date
              "opening_range": {"high": 362.18, "low": 354.47, "minutes": 15},
              "stop": 358.32, "stop_rule": "or_mid", "stop_label": "opening-range midpoint",
              "target": 370.04, "target_r": 1.0, "target_label": "1R (one times the risk)",
-             "risk_per_share": 5.86, "reward_risk": 1.0, "flat_by": "15:15"}
+             "risk_per_share": 5.86, "reward_risk": 1.0, "flat_by": "15:00"}
 REEL_ENTRY = {"created_by": "trader-entry", "symbol": "TSLA", "setup": "orb", "side": "buy", "date": "2026-10-19",
               "status": "triggered", "time": "10:00 AM", "bar_start": "09:55", "bar_index": 8, "price": 364.18,
               "level": 362.18, "interval": "5m", "opening_range": {"high": 362.18, "low": 354.47, "minutes": 15},
@@ -188,7 +188,7 @@ class Cli(unittest.TestCase):
         self.assertIn("Target        ₹370.04  1R (one times the risk)", text)
         self.assertIn("Risk a share  ₹5.86 (1.61% of the entry)", text)
         self.assertIn("Reward:risk   1.0", text)
-        self.assertIn("Flat by       15:15", text)
+        self.assertIn("Flat by       15:00", text)
         self.assertIn("not a guarantee", text)
         self.assertIn("/trader-timemachine", text)
         self.assertNotIn("pro" + "fit", text.lower())   # never on screen
@@ -260,17 +260,17 @@ class Cli(unittest.TestCase):
 
     def test_flat_by_config_close_and_late_entries(self):
         self.write(os.path.join("trader", "entry.json"), REEL_ENTRY)
-        self.write(os.path.join("trader", "config.json"), {"flat_by": "15:05", "min_reward_risk": 1.5,
+        self.write(os.path.join("trader", "config.json"), {"flat_by": "14:55", "min_reward_risk": 1.5,
                                                             "tick_size": 0.01})
         code, text, _ = self.plan("--target", "1R", "--json")
         p = json.loads(text)
-        self.assertEqual(p["flat_by"], "15:05")
+        self.assertEqual(p["flat_by"], "14:55")
         self.assertIn("under your min_reward_risk 1.5", p["warnings"][0])
         os.remove(os.path.join("trader", "config.json"))
 
         self.write(os.path.join("trader", "config.json"), {"flat_by": "15:25", "tick_size": 0.01})
         code, text, _ = self.plan("--json")
-        self.assertIn("square off intraday (MIS)", json.loads(text)["warnings"][-1])
+        self.assertIn("FYERS may square off the position", json.loads(text)["warnings"][-1])
         self.write(os.path.join("trader", "config.json"), {"flat_by": "15:30", "tick_size": 0.01})
         code, _, err = self.plan()
         self.assertEqual(code, 1)

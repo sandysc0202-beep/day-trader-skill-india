@@ -209,9 +209,32 @@ def http_get(url, timeout=20):
         return r.read().decode("utf-8", "replace")
 
 
+def fyers_bridge():
+    """trader-broker/fyers_api.py when FYERS is today's data source (you logged in to FYERS
+    this morning, or TRADER_DATA_SOURCE=fyers), else None and Yahoo it is. FYERS' bars come
+    back in Yahoo's chart shape, so nothing else changes."""
+    folder = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "trader-broker")
+    if not os.path.isfile(os.path.join(folder, "fyers_api.py")):
+        return None
+    if folder not in sys.path:
+        sys.path.insert(0, folder)
+    try:
+        import fyers_api
+    except ImportError:
+        return None
+    return fyers_api if fyers_api.data_source() == "fyers" else None
+
+
 def yahoo_get(path):
     """GET a Yahoo Finance path. query2 first, query1 on a 429 or 5xx, and one
-    more round after BACKOFF seconds if a 429 was seen. 4xx other than 429 is final."""
+    more round after BACKOFF seconds if a 429 was seen. 4xx other than 429 is final.
+    When FYERS is the data source, the same answer comes from FYERS instead."""
+    fy = fyers_bridge()
+    if fy:
+        try:
+            return fy.yahoo_compat(path)
+        except fy.FyersError as e:
+            raise ScanError(str(e))
     last = "no answer"
     for attempt in (0, 1):
         saw_429 = False
@@ -916,7 +939,7 @@ def cmd_orb(a):
     now = parse_now(a.now)
     at = parse_hhmm(a.at) if a.at else None
     cfg = read_config(a.config)
-    until = parse_hhmm(a.until or cfg.get("no_entries_after") or "15:00", "--until")
+    until = parse_hhmm(a.until or cfg.get("no_entries_after") or "14:45", "--until")
     data = failed = None
     explicit_day = None
     offline_syms = None
@@ -1037,7 +1060,7 @@ def main(argv=None):
     p.add_argument("--max-confirm", type=int, default=MAX_CONFIRM,
                    help="v8 charts to fetch in stage 2, most traded first (%d; 0 = all)" % MAX_CONFIRM)
     p.add_argument("--at", help="cut the clock at this India time (IST), HH:MM")
-    p.add_argument("--until", help="no new entries after HH:MM (default: config no_entries_after, 15:00)")
+    p.add_argument("--until", help="no new entries after HH:MM (default: config no_entries_after, 14:45)")
     p.add_argument("--config", default="trader/config.json")
     a = ap.parse_args(argv)
     if not a.cmd:

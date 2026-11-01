@@ -4,9 +4,9 @@
 Default mode: sizes ONE day trade from trader/plan.json (written by
 trader-exit) to your budget and your max loss per trade, then writes one
 bracket order (entry, stop-loss, take-profit) to trader/orders.json, an
-intraday (MIS) order on NSE. It never places anything: trader-risk checks the
-order and trader-broker turns it into Zerodha Kite orders after your yes
-(Kite places the entry; the stop-loss follows as its own ticket).
+intraday (INTRADAY) order on NSE. It never places anything: trader-risk checks
+the order and trader-broker sends it to FYERS after your yes (FYERS gets the
+entry; the stop-loss follows as its own ticket).
 
     python3 size.py                                  # trader/plan.json + trader/config.json
     python3 size.py --write                          # write trader/orders.json
@@ -46,7 +46,7 @@ list of stocks by weight, as delivery (CNC) buys.
                    shared out, so you never place a ₹2 order
   5. rounding      whole rupees by default (--cents for paise); the rounding
                    rupee goes to the biggest position that is not capped
-  6. whole shares  always for orders (NSE has no fractions, Kite takes a
+  6. whole shares  always for orders (NSE has no fractions, FYERS takes a
                    quantity): it needs prices. Without them you get a rupee
                    split to read, and no orders
 
@@ -74,11 +74,11 @@ DEFAULTS = {
     "min_reward_risk": 1.0,
     "require_stop": True,
     "no_entries_before": "09:30",
-    "no_entries_after": "15:00",
-    "flat_by": "15:15",
+    "no_entries_after": "14:45",
+    "flat_by": "15:00",
     "fractional": False,
     "tick_size": None,
-    "broker": "zerodha",
+    "broker": "fyers",
     "paper": True,
     "blocked": [],
     "allow_options": False,
@@ -405,12 +405,12 @@ def size_trade(plan, cfg, budget=None, limit=None, price=None, cash=None, today=
 
 
 def bracket_order(s):
-    """The one proposed order in the pack's order format (trader-broker turns it into Kite's
-    place_order arguments), plus why and plan."""
+    """The one proposed order in the pack's order format (trader-broker turns it into FYERS'
+    Single Order body), plus why and plan."""
     if s["refusal"] or s["qty"] <= 0:
         return None
     o = {"symbol": s["symbol"], "side": "buy", "qty": str(int(s["qty"])), "type": s["order_type"],
-         "time_in_force": "day", "product": "MIS"}
+         "time_in_force": "day", "product": "INTRADAY"}
     if s["order_type"] == "limit":
         o["limit_price"] = _price(s["entry"])
     setup = SETUP_WORDS.get(s["setup"], s["setup"] or "day trade")
@@ -461,9 +461,9 @@ def plan_report(s, order, notes=()):
                     _price(s["risk_per_share"]), money(s["max_loss"])))
     lines.append("A stop is an order, not a promise: in a fast market it can fill below %s." % _price(s["stop"]))
     lines.append("")
-    lines.append("Proposed bracket order (intraday, MIS; nothing has been placed):")
+    lines.append("Proposed bracket order (intraday, INTRADAY; nothing has been placed):")
     how = "limit %s" % order["limit_price"] if order["type"] == "limit" else "market"
-    lines.append("  buy %s %s, %s, day, MIS, target %s (watched by trader-alerts), stop-loss %s (SL-M after the fill)"
+    lines.append("  buy %s %s, %s, day, INTRADAY, target %s (watched by trader-alerts), stop-loss %s (SL-M after the fill)"
                  % (order["qty"], order["symbol"], how, order["take_profit_limit_price"],
                     order["stop_loss_stop_price"]))
     if s["flat_by"]:
@@ -726,7 +726,7 @@ def report(result, orders, source=""):
         lines.append("Dropped %s: %s" % (d["ticker"], d["reason"]))
     lines.append("")
     if not r["whole_shares"]:
-        lines.append("No orders: NSE trades whole shares and Kite takes a quantity, so orders need prices. "
+        lines.append("No orders: NSE trades whole shares and FYERS takes a quantity, so orders need prices. "
                      "Get them (trader-alerts: alerts.py quote --holdings --write) and run again with "
                      "--prices trader/prices.json.")
         lines.append("Education and tooling, not financial advice.")

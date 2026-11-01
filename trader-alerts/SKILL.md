@@ -10,7 +10,7 @@ description: >-
   itself, fetches free delayed quotes (Yahoo chart JSON, .NS symbols) one
   symbol at a time, and writes trader/prices.json for sizing and the risk
   check. Use when the user says "alert me when", "tell me if RELIANCE hits",
-  "watch my stop", "watch my trade", "remind me to close by 3:15", "is the
+  "watch my stop", "watch my trade", "remind me to close by 3:00", "is the
   market open", "when does the market open", "get me a price", or right
   after /trader-exit writes a plan.
 argument-hint: "[ticker] [price]"
@@ -20,9 +20,9 @@ argument-hint: "[ticker] [price]"
 
 Price Alerts watches the numbers so the user does not have to stare at a
 chart. An alert is information, never an order: when a stop alert rings,
-nothing is sold by this skill. On Zerodha the stop-loss sits at the broker
-as its own SL-M order (trader-broker `protect`), but Kite holds no target for
-a share trade: the target alert is the one that tells the user it is time to
+nothing is sold by this skill. On FYERS the stop-loss sits at the broker
+as its own SL-M order (trader-broker `protect`), but no target order sits
+there: the target alert is the one that tells the user it is time to
 take the gain, and the flat-by alert says when to be out.
 
 `${CLAUDE_SKILL_DIR}` below is this skill's folder (where this SKILL.md lives).
@@ -82,8 +82,9 @@ early close, and NSE has no scheduled ones.
   and for checking a size, not for timing an order. The broker's price is the
   one that fills. Each price in `trader/prices.json` keeps its quote time, and
   trader-risk only uses one under 15 minutes old.
-- If Yahoo is down, read the price from Zerodha's Kite connector (`get_ltp` or
-  `get_quotes`, read only) and write it into `trader/prices.json` as
+- With today's FYERS token (trader-broker `fyers_api.py login`) the quotes come
+  from FYERS instead of Yahoo. Otherwise, if Yahoo is down, read the price with
+  `fyers_api.py quote SYM` and write it into `trader/prices.json` as
   `{"as_of": "...Z", "prices": {"RELIANCE": 1412.40}}`.
 
 ## The NSE clock
@@ -111,13 +112,13 @@ itself and ignores the computer's own time zone.
    rules and rings each alert once. A check reads the latest delayed quote;
    it is not a live feed, and a price can pass a level between two checks.
 3. Tell the user what rang in one line each. A stop alert means the SL-M
-   stop-loss has probably filled: check Kite's `get_positions` (read only) and
+   stop-loss has probably filled: check `fyers_api.py positions` (read only) and
    record the fill with trader-broker. A target alert means the price reached
    the target and nothing at the broker sold it: if the user wants out, that is
    trader-broker `flatten` (cancel the open stop-loss first), then trader-risk,
    then the user's yes. "Flat by close" means the same for anything still
-   open. Zerodha also squares off intraday (MIS) positions itself from about
-   3:20 PM, with a charge. Never act for them.
+   open. FYERS also squares off INTRADAY positions itself from 3:05 PM (stocks
+   with F&O contracts; 3:20 PM for the rest), with a charge. Never act for them.
 
 ## Example: the worked day in the tests
 
@@ -156,12 +157,12 @@ live, and never predicts where a price is going.
 ## Safety
 
 - Education and tooling, not financial advice. A PASS is a rules check, not a recommendation.
-- Paper trading by default (`"paper": true`). Zerodha has no paper account, so paper means Claude records
-  a pretend fill and never calls Kite. Going live is the user's own decision, in their own config.
-- Nothing in this pack places an order except trader-broker, and only when all three hold: trader-risk
-  passed that exact order today, the user typed an explicit yes for that one order in the chat, and the
-  user clicked Allow once on Claude's own card because the order tool is set to "Needs approval"
-  (Customize > Connectors > tool permissions). Never set an order tool to "Always allow".
+- Paper trading by default (`"paper": true`). FYERS has no paper account, so paper means Claude records
+  a pretend fill and nothing goes to FYERS. Going live is the user's own decision, in their own config.
+- Nothing in this pack places an order except trader-broker's `ticket.py place`, and only when all three
+  hold: trader-risk passed that exact order today, the user typed an explicit yes for that one order in
+  the chat, and the user clicked Allow once on Claude's own card for that command. Never add
+  `ticket.py place` (or a FYERS MCP order tool) to an "Always allow" list.
 - No F&O, margin (MTF), short selling or leverage unless the config allows it and the user confirms.
-- The Zerodha login happens on Zerodha's own page, never in the chat. API keys, if any, live in the
-  Claude Desktop config or environment variables, never in the chat.
+- The FYERS login happens on FYERS' own page, never in the chat. The app secret lives in an environment
+  variable or `trader/fyers.secret`, never in the chat.

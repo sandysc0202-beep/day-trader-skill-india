@@ -1,22 +1,29 @@
 #!/usr/bin/env python3
 """Order tickets and the decision log for trader-broker. Standard library only.
 
-This tool never talks to a broker and never places anything. It does its
-work around the one moment that matters, your yes:
+Only one command talks to the broker: place, and only for an order you said
+yes to today (cancel removes one open order). The rest works around the one
+moment that matters, your yes:
 
   show      renders each proposed order as a plain-English ticket plus the
-            exact arguments Claude will send to Zerodha's Kite MCP place_order
-            tool. An order is READY only if trader-risk passed THIS exact order
-            today (matched by fingerprint) and nobody has decided on it yet.
+            exact body FYERS will get (POST /api/v3/orders/sync). An order is
+            READY only if trader-risk passed THIS exact order today (matched by
+            fingerprint) and nobody has decided on it yet.
   approve   records your explicit yes for ONE order, with your reply word for
             word. It refuses "yes to all", "sure", "ok", a yes that names a
             different stock or amount, and any order that is not READY.
   decline   records a no.
-  result    records what happened: placed (with Kite's order id), denied,
-            failed, or paper (a pretend fill, when "paper" is true).
+  place     LIVE only: sends ONE approved order to FYERS (fyers_api.py) and
+            records the order id, and the fill when FYERS reports one. It
+            refuses any order without your recorded yes from today.
+  cancel    LIVE only: cancels one open FYERS order by its id (the stop-loss,
+            before a flatten), and logs it.
+  result    records what happened by hand: placed (with FYERS' order id),
+            denied, failed, or paper (a pretend fill, when "paper" is true).
   fill      records a fill in trader/portfolio.json (cash and shares).
   protect   after an entry fills: a stop-loss ticket (SL-M sell) for the
-            shares, at the plan's stop. Kite has no bracket order for this.
+            shares, at the plan's stop. The entry goes to FYERS alone; the stop
+            follows as its own order, and trader-alerts watches the target.
   flatten   builds a sell ticket that closes a symbol's open position by
             flat_by. It still goes through trader-risk and your yes.
   log       prints today's decisions.
@@ -24,15 +31,17 @@ work around the one moment that matters, your yes:
     python3 ticket.py show                    # every order, READY or not
     python3 ticket.py show --index 1 --json   # one ticket as JSON
     python3 ticket.py approve --index 1 --reply "yes"
-    python3 ticket.py result --index 1 --status placed --broker-id 250101000123456
+    python3 ticket.py place --index 1          # live: after the yes
+    python3 ticket.py cancel --broker-id 26110100012345
+    python3 ticket.py result --index 1 --status placed --broker-id 26110100012345
     python3 ticket.py result --index 1 --status paper --filled-qty 8 --filled-price 364.20
     python3 ticket.py protect --symbol RELIANCE
     python3 ticket.py fill --symbol RELIANCE --side buy --qty 8 --price 1412.40
     python3 ticket.py flatten --symbol RELIANCE --qty 8
     python3 ticket.py log
 
-Zerodha has no paper-trading account. With "paper": true (the default) Claude
-never calls Kite: your yes records a pretend fill at the latest price instead.
+FYERS has no paper-trading account. With "paper": true (the default) nothing
+goes to FYERS: your yes records a pretend fill at the latest price instead.
 
 Everything is written to trader/state/broker.json (append only). Dates are
 India dates; --now "2026-10-19 10:15" pins the clock.
@@ -46,15 +55,17 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fyers_api  # noqa: E402  (next to this file)
+
 # The pack's order format (trader/orders.json): the same list as trader-risk/check.py.
 ORDER_FIELDS = ("symbol", "side", "qty", "notional", "type", "time_in_force", "limit_price",
                 "stop_price", "trail_price", "trail_percent", "extended_hours", "client_order_id",
                 "order_class", "take_profit_limit_price", "stop_loss_stop_price",
                 "stop_loss_limit_price", "advanced_instructions", "product", "exchange")
-KITE_TYPES = {"market": "MARKET", "limit": "LIMIT", "stop": "SL-M", "stop_limit": "SL"}
-KITE_TOOL = "place_order"
+FYERS_CALL = "POST /api/v3/orders/sync"
 TIF_WORDS = {"day": "good for today", "ioc": "immediate or cancel"}
-PRODUCT_WORDS = {"MIS": "intraday (MIS)", "CNC": "delivery (CNC)"}
+PRODUCT_WORDS = {"INTRADAY": "intraday (INTRADAY)", "CNC": "delivery (CNC)"}
 YES_WORDS = ("yes", "y")
 BATCH_WORDS = {"all", "every", "everything", "rest", "remaining", "them", "both", "batch", "each"}
 DOUBT_WORDS = {"no", "not", "dont", "don't", "wait", "cancel", "stop", "but", "maybe", "later",
@@ -156,27 +167,14 @@ def _f(x):
         return None
 
 
-def _kite_price(v):
-    return round(float(v), 2)
-
-
 def tool_input(order):
-    """The exact arguments for Kite's place_order (the Kite MCP server's names and enums).
-    For a bracket this is the entry only: Kite places no stop or target with it.
+    """The exact body FYERS gets (Single Order API, fyers_api.order_payload).
+    For a bracket this is the entry only: the stop follows as its own order.
     "why" and "plan" are ours and are never sent."""
-    typ = str(order.get("type", "market")).lower()
-    out = {"variety": "regular", "exchange": str(order.get("exchange") or "NSE").upper(),
-           "tradingsymbol": str(order.get("symbol", "")).upper(),
-           "transaction_type": str(order.get("side", "")).upper(),
-           "quantity": int(float(order.get("qty") or 0)),
-           "product": str(order.get("product") or "MIS").upper(),
-           "order_type": KITE_TYPES.get(typ, typ.upper()),
-           "validity": str(order.get("time_in_force") or "day").upper()}
-    if typ in ("limit", "stop_limit") and order.get("limit_price") is not None:
-        out["price"] = _kite_price(order["limit_price"])
-    if typ in ("stop", "stop_limit") and order.get("stop_price") is not None:
-        out["trigger_price"] = _kite_price(order["stop_price"])
-    return out
+    try:
+        return fyers_api.order_payload(order)
+    except (fyers_api.FyersError, KeyError, TypeError, ValueError) as e:
+        return {"error": "FYERS would refuse this order: %s" % e}
 
 
 def stop_leg(order, qty=None):
@@ -187,7 +185,7 @@ def stop_leg(order, qty=None):
     side = "sell" if str(order.get("side", "buy")).lower() == "buy" else "buy"
     return {"symbol": str(order.get("symbol", "")).upper(), "side": side,
             "qty": _str_num(qty if qty is not None else order.get("qty")), "type": "stop",
-            "stop_price": _p(stop), "time_in_force": "day", "product": str(order.get("product") or "MIS").upper()}
+            "stop_price": _p(stop), "time_in_force": "day", "product": str(order.get("product") or "INTRADAY").upper()}
 
 
 def _money(v):
@@ -240,7 +238,7 @@ def plain_parts(order):
                 leg += " (limit %s)" % _p(order["stop_loss_limit_price"])
             parts.append(leg)
         if order.get("take_profit_limit_price") is not None:
-            parts.append("target %s (trader-alerts watches it; Kite holds no target order)"
+            parts.append("target %s (trader-alerts watches it; no target order sits at FYERS)"
                          % _p(order["take_profit_limit_price"]))
         loss, stop = max_loss(order)
         if loss is not None:
@@ -352,7 +350,7 @@ def status_of(order, risk, state, today):
     if rec:
         st = rec.get("status")
         if st == "approved":
-            return False, "APPROVED by you at %s, waiting for the place_order call" % rec.get("at"), rv
+            return False, "APPROVED by you at %s, waiting for ticket.py place" % rec.get("at"), rv
         return False, "DONE: %s at %s" % (st, rec.get("at")), rv
     return True, "READY: trader-risk PASS, waiting for your yes", rv
 
@@ -369,8 +367,8 @@ def kind_of(order, rv):
 def render(order, idx, total, cfg, risk, state, today):
     ready, label, rv = status_of(order, risk, state, today)
     paper = cfg.get("paper", True)
-    acct = "PAPER (nothing goes to Zerodha)" if paper else "LIVE ACCOUNT, REAL MONEY"
-    lines = ["ORDER %d of %d, %s, Zerodha Kite" % (idx, total, acct)]
+    acct = "PAPER (nothing goes to FYERS)" if paper else "LIVE ACCOUNT, REAL MONEY"
+    lines = ["ORDER %d of %d, %s, FYERS" % (idx, total, acct)]
     for part in plain_parts(order):
         lines.append("  " + part)
     if order.get("why"):
@@ -379,14 +377,14 @@ def render(order, idx, total, cfg, risk, state, today):
     for w in (rv or {}).get("warnings", []):
         lines.append("  note: " + w)
     if paper:
-        lines.append("  Paper: Claude does not call Kite. After your yes it records a pretend fill at the")
-        lines.append("  latest price (ticket.py result --status paper). Kite would get exactly:")
+        lines.append("  Paper: nothing goes to FYERS. After your yes it records a pretend fill at the")
+        lines.append("  latest price (ticket.py result --status paper). FYERS would get exactly:")
     else:
-        lines.append("  Claude will call %s with exactly:" % KITE_TOOL)
+        lines.append("  After your yes, ticket.py place sends FYERS (%s) exactly:" % FYERS_CALL)
     for l in json.dumps(tool_input(order), indent=2).splitlines():
         lines.append("    " + l)
     if is_bracket(order):
-        lines.append("  Kite places the entry only: it has no bracket order for shares. After the entry fills,")
+        lines.append("  FYERS gets the entry only. After the entry fills,")
         lines.append("  ticket.py protect writes the stop-loss (an SL-M sell at %s) as its own ticket, with its"
                      % _p(stop_leg(order)["stop_price"]) if stop_leg(order) else
                      "  ticket.py protect writes the stop-loss as its own ticket, with its")
@@ -395,7 +393,7 @@ def render(order, idx, total, cfg, risk, state, today):
     if ready:
         lines.append("  Reply \"yes\" to place this one order, or \"no\" to skip it.")
         if not paper:
-            lines.append("  Claude's own card then asks again: Allow once places it, Deny stops it.")
+            lines.append("  Claude's own card then asks again before ticket.py place runs: Allow once sends it.")
     return "\n".join(lines), ready
 
 
@@ -404,7 +402,7 @@ def ticket_json(order, idx, cfg, risk, state, today):
     loss, stop = max_loss(order)
     return {"index": idx, "ready": ready, "status": label, "plain": plain(order),
             "fingerprint": fingerprint(order), "paper": bool(cfg.get("paper", True)),
-            "broker": cfg.get("broker", "zerodha"), "tool": KITE_TOOL,
+            "broker": cfg.get("broker", "fyers"), "tool": FYERS_CALL,
             "tool_input": tool_input(order), "why": order.get("why", ""),
             "bracket": is_bracket(order), "stop_leg": tool_input(stop_leg(order)) if is_bracket(order) and
             stop_leg(order) else None, "max_loss": loss, "stop": stop}
@@ -532,21 +530,21 @@ def cmd_approve(a):
     rec = {"at": ist_iso(now), "date": today, "index": a.index, "fingerprint": fingerprint(order),
            "symbol": str(order.get("symbol", "")).upper(), "side": order.get("side"),
            "qty": order.get("qty"), "kind": kind_of(order, rv), "max_loss": loss, "stop": stop,
-           "plain": plain(order), "status": "approved", "reply": a.reply,
-           "paper": bool(cfg.get("paper", True)), "broker": cfg.get("broker", "zerodha")}
+           "type": str(order.get("type", "market")), "plain": plain(order), "status": "approved", "reply": a.reply,
+           "paper": bool(cfg.get("paper", True)), "broker": cfg.get("broker", "fyers")}
     state.setdefault("orders", []).append(rec)
     write_json(a.state, state)
     print("Recorded your yes for order %d: %s." % (a.index, plain(order)))
     if cfg.get("paper", True):
-        print("Paper: do not call Kite. Get the latest price (trader-alerts: alerts.py quote %s) and record"
+        print("Paper: nothing goes to FYERS. Get the latest price (trader-alerts: alerts.py quote %s) and record"
               % str(order.get("symbol", "")).upper())
         print("a pretend fill: ticket.py result --index %d --status paper --filled-qty %s --filled-price P"
               % (a.index, _str_num(order.get("qty"))))
     else:
-        print("Now call %s with exactly:" % KITE_TOOL)
+        print("Now send it: ticket.py place --index %d. FYERS gets exactly:" % a.index)
         print(json.dumps(tool_input(order), indent=2))
-        print("Claude's card shows Allow once / Deny. Then: ticket.py result --index %d --status "
-              "placed|denied|failed" % a.index)
+        print("Claude's card shows Allow once / Deny for that command; Deny means: ticket.py result "
+              "--index %d --status denied" % a.index)
     return 0
 
 
@@ -572,10 +570,10 @@ def cmd_result(a):
     if a.status == "paper" and not (a.filled_qty and a.filled_price):
         raise TicketError("a paper result needs --filled-qty and --filled-price (the latest price)")
     if a.status == "paper" and not cfg.get("paper", True):
-        raise TicketError("this is a live account (\"paper\": false): record what Kite answered, not a paper fill")
+        raise TicketError("this is a live account (\"paper\": false): record what FYERS answered, not a paper fill")
     new = {"at": ist_iso(now), "date": today, "index": a.index, "fingerprint": fp, "symbol": rec["symbol"],
            "side": rec["side"], "plain": rec["plain"], "status": a.status}
-    for k in ("qty", "kind", "max_loss", "stop"):
+    for k in ("qty", "kind", "max_loss", "stop", "type"):
         if rec.get(k) is not None:
             new[k] = rec[k]
     if a.broker_id:
@@ -618,7 +616,7 @@ def cmd_flatten(a):
     cfg = read_json(a.config, "config", required=False) or {}
     sym = a.symbol.strip().upper()
     now, today = _clock(a)
-    source = "the broker, get_positions"
+    source = "FYERS positions"
     if a.qty is not None:
         qty = _f(a.qty)
         if qty is None or qty <= 0:
@@ -629,13 +627,13 @@ def cmd_flatten(a):
                   if str(p.get("ticker") or p.get("symbol") or "").upper() == sym)
         source = a.portfolio
         if qty <= 1e-9:
-            raise TicketError("nothing to flatten: no %s shares in %s. Check the broker (get_positions) "
+            raise TicketError("nothing to flatten: no %s shares in %s. Check FYERS (fyers_api.py positions) "
                               "and pass --qty if you do hold some" % (sym, a.portfolio))
     plan = read_json(a.plan, "plan", required=False) or {}
     flat_by = (plan.get("flat_by") if str(plan.get("symbol", "")).upper() == sym else None) \
-        or cfg.get("flat_by") or "15:15"
+        or cfg.get("flat_by") or "15:00"
     order = {"symbol": sym, "side": "sell", "qty": _str_num(qty), "type": "market", "time_in_force": "day",
-             "product": "MIS",
+             "product": "INTRADAY",
              "why": "flat by %s IST: closes the %s day trade before the close (qty from %s)"
              % (flat_by, sym, source)}
     old = read_json(a.orders, "orders", required=False)
@@ -649,15 +647,139 @@ def cmd_flatten(a):
     print("Wrote it to %s%s." % (a.orders, (" (it replaced %d earlier proposal%s)"
                                              % (replaced, "" if replaced == 1 else "s")) if replaced else ""))
     if a.qty is None:
-        print("The qty comes from %s. Check it against get_positions before you say yes." % source)
+        print("The qty comes from %s. Check it against FYERS (fyers_api.py positions) before you say yes." % source)
     print("Next:")
     print("  1. trader-risk: check.py. A sell that only closes what you hold is never blocked by the daily")
     print("     limits or the entry window.")
     print("  2. ticket.py show, then the user's yes for this one order.")
-    print("  3. If the stop-loss from ticket.py protect is still open at Zerodha, cancel it FIRST: get_orders,")
-    print("     then cancel_order for it (Needs approval). Otherwise Kite sells twice and leaves you short.")
-    print("     Then place_order with the ticket. (Zerodha also squares off MIS positions itself from about")
-    print("     3:20 PM, with a charge.)")
+    stop_id = open_stop_id(read_json(getattr(a, "state", None), "broker state", required=False) or {}, sym, today)
+    if stop_id:
+        print("  3. The stop-loss for %s is open at FYERS (order %s): cancel it FIRST:" % (sym, stop_id))
+        print("     ticket.py cancel --broker-id %s. Otherwise both sells can fill and leave you short." % stop_id)
+    else:
+        print("  3. If a stop-loss for %s is still open at FYERS (fyers_api.py orders), cancel it FIRST with" % sym)
+        print("     ticket.py cancel --broker-id ID. Otherwise both sells can fill and leave you short.")
+    print("  4. Then ticket.py place --index 1. (FYERS also squares off INTRADAY positions itself near the")
+    print("     close, with a charge.)")
+    return 0
+
+
+PLACE = fyers_api.place_order       # tests swap these three
+CANCEL = fyers_api.cancel_order
+ORDERBOOK = fyers_api.orderbook
+SLEEP = __import__("time").sleep
+
+
+def open_stop_id(state, sym, today):
+    """FYERS' id of today's stop-loss for sym that was placed and not cancelled or filled since, or None."""
+    open_ids = []
+    for r in state.get("orders", []):
+        if rec_day(r) != today or str(r.get("symbol", "")).upper() != sym:
+            continue
+        bid = r.get("broker_order_id")
+        if r.get("status") == "placed" and r.get("type") == "stop" and bid:
+            open_ids.append(bid)
+        elif r.get("status") in ("cancelled", "stop-filled") and bid in open_ids:
+            open_ids.remove(bid)
+    return open_ids[-1] if open_ids else None
+
+
+def _record(state_path, rec):
+    state = load_state(state_path)
+    state.setdefault("orders", []).append(rec)
+    write_json(state_path, state)
+
+
+def cmd_place(a):
+    """Send ONE approved order to FYERS. The guard: live config, trader-risk PASS for this exact
+    order today, and the user's yes recorded today and not used yet."""
+    orders, cfg, risk, state, today, now = _load(a)
+    order = _pick(orders, a.index)
+    fp = fingerprint(order)
+    if cfg.get("paper", True):
+        raise TicketError("\"paper\" is true, so nothing goes to FYERS. Record a pretend fill instead: "
+                          "ticket.py result --index %d --status paper --filled-qty Q --filled-price P" % a.index)
+    rv, why = risk_verdict(risk, fp, today)
+    if rv is None or rv.get("verdict") != "PASS":
+        raise TicketError("order %d has no trader-risk PASS today%s; nothing was sent"
+                          % (a.index, (": " + why) if why else ""))
+    rec = latest(state, fp, today)
+    if not rec or rec.get("status") != "approved":
+        raise TicketError("order %d has no unused yes recorded today (ticket.py approve first); nothing was sent"
+                          % a.index)
+    try:
+        body = fyers_api.order_payload(order)
+    except fyers_api.FyersError as e:
+        raise TicketError("order %d cannot go to FYERS: %s; nothing was sent" % (a.index, e))
+    base = {"date": today, "index": a.index, "fingerprint": fp, "symbol": rec["symbol"], "side": rec["side"],
+            "plain": rec["plain"]}
+    for k in ("qty", "kind", "max_loss", "stop", "type"):
+        if rec.get(k) is not None:
+            base[k] = rec[k]
+    try:
+        res = PLACE(body)
+    except fyers_api.FyersError as e:
+        _record(a.state, dict(base, at=ist_iso(now), status="failed", note=str(e)))
+        print("FYERS refused order %d: %s. Recorded as failed." % (a.index, e))
+        return 1
+    bid = res.get("id") or ""
+    _record(a.state, dict(base, at=ist_iso(now), status="placed", broker_order_id=bid,
+                          note=res.get("message", "")))
+    print("Placed order %d at FYERS: %s (order id %s)." % (a.index, plain(order), bid or "?"))
+    fill, word = None, None
+    for attempt in range(a.wait):
+        try:
+            book = ORDERBOOK()
+        except fyers_api.FyersError:
+            book = []
+        row = next((o for o in book if str(o.get("id")) == bid), None)
+        if row:
+            word = row.get("status_word")
+            if word == "filled" and row.get("tradedPrice"):
+                fill = (row.get("filledQty") or body["qty"], row["tradedPrice"])
+                break
+            if word in ("rejected", "cancelled", "expired"):
+                _record(a.state, dict(base, at=ist_iso(now), status=word, broker_order_id=bid,
+                                      note=row.get("message", "")))
+                print("FYERS reports the order %s: %s" % (word, row.get("message", "")))
+                return 1
+            if word == "pending" and rec.get("type") in ("stop", "limit", "stop_limit"):
+                break                      # a resting order: it is placed, not filled
+        if attempt + 1 < a.wait:
+            SLEEP(1)
+    if fill:
+        apply_fill(a.portfolio, cfg, rec["symbol"], rec["side"], fill[0], fill[1], today)
+        log_fill(a.state, now, today, rec["symbol"], rec["side"], fill[0], fill[1])
+        print("Filled: %s %s %s at %s. Added to %s." % (rec["side"], _str_num(float(fill[0])), rec["symbol"],
+                                                         _p(fill[1]), a.portfolio))
+        if rec.get("kind") == "entry" and is_bracket(order):
+            print("Next, the stop-loss: ticket.py protect --symbol %s --qty %s (its own check and yes)."
+                  % (rec["symbol"], _str_num(float(fill[0]))))
+    else:
+        print("Status at FYERS: %s. When it fills, record it: ticket.py fill --symbol %s --side %s --qty Q "
+              "--price P" % (word or "not in the order book yet", rec["symbol"], rec["side"]))
+        if rec.get("kind") == "entry" and is_bracket(order):
+            print("Once it fills, put the stop-loss in: ticket.py protect --symbol %s." % rec["symbol"])
+    return 0
+
+
+def cmd_cancel(a):
+    """Cancel one open FYERS order (the stop-loss before a flatten) and log it."""
+    cfg = read_json(a.config, "config", required=False) or {}
+    now, today = _clock(a)
+    if cfg.get("paper", True):
+        raise TicketError("\"paper\" is true: there are no FYERS orders to cancel")
+    state = load_state(a.state)
+    sym = next((str(r.get("symbol", "")).upper() for r in reversed(state.get("orders", []))
+                if r.get("broker_order_id") == a.broker_id), "")
+    try:
+        res = CANCEL(a.broker_id)
+    except fyers_api.FyersError as e:
+        raise TicketError("FYERS did not cancel %s: %s" % (a.broker_id, e))
+    _record(a.state, {"at": ist_iso(now), "date": today, "status": "cancelled", "symbol": sym,
+                      "broker_order_id": a.broker_id, "plain": "cancel FYERS order %s%s" % (
+                          a.broker_id, (" (" + sym + ")") if sym else ""), "note": res.get("message", "")})
+    print("Cancelled FYERS order %s%s." % (a.broker_id, (" for " + sym) if sym else ""))
     return 0
 
 
@@ -677,9 +799,9 @@ def cmd_protect(a):
         qty = sum(_f(p.get("shares", p.get("qty"))) or 0 for p in pf.get("positions", [])
                   if str(p.get("ticker") or p.get("symbol") or "").upper() == sym)
     if not qty or qty <= 0 or abs(qty - round(qty)) > 1e-9:
-        raise TicketError("protect needs the whole shares you hold: --qty N (from get_positions)")
+        raise TicketError("protect needs the whole shares you hold: --qty N (fyers_api.py positions)")
     order = {"symbol": sym, "side": "sell", "qty": _str_num(qty), "type": "stop", "stop_price": _p(stop),
-             "time_in_force": "day", "product": "MIS",
+             "time_in_force": "day", "product": "INTRADAY",
              "why": "the stop-loss for the %s day trade: sells %s shares if the price trades at or under %s"
              % (sym, _str_num(qty), _p(stop))}
     doc = {"created_by": "trader-broker", "created_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "status": "proposed",
@@ -688,7 +810,7 @@ def cmd_protect(a):
            "source": "ticket.py protect %s on %s" % (sym, today), "orders": [order]}
     write_json(a.orders, doc)
     print("Stop-loss for %s: %s." % (sym, plain(order)))
-    print("Wrote it to %s. Next: check.py, ticket.py show, the user's yes, then %s." % (a.orders, KITE_TOOL))
+    print("Wrote it to %s. Next: check.py, ticket.py show, the user's yes, then ticket.py place." % a.orders)
     print("An SL-M order triggers at %s and then sells at the market: in a fast drop it fills lower." % _p(stop))
     return 0
 
@@ -712,7 +834,7 @@ def cmd_log(a):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Order tickets and your yes (trader-broker). Never places orders.")
+    ap = argparse.ArgumentParser(description="Order tickets and your yes (trader-broker). Sends an order to FYERS only with place, after your yes.")
     sub = ap.add_subparsers(dest="cmd")
 
     def clock(p):
@@ -747,6 +869,16 @@ def main(argv=None):
     p.add_argument("--filled-qty")
     p.add_argument("--filled-price")
     p.add_argument("--portfolio", default="trader/portfolio.json")
+    p = sub.add_parser("place", help="LIVE: send one approved order to FYERS")
+    common(p)
+    p.add_argument("--index", type=int, required=True)
+    p.add_argument("--portfolio", default="trader/portfolio.json")
+    p.add_argument("--wait", type=int, default=3, help="seconds to look for the fill (default 3)")
+    p = sub.add_parser("cancel", help="LIVE: cancel one open FYERS order by id")
+    p.add_argument("--broker-id", required=True)
+    p.add_argument("--config", default="trader/config.json")
+    p.add_argument("--state", default="trader/state/broker.json")
+    clock(p)
     p = sub.add_parser("fill", help="record a fill in trader/portfolio.json")
     p.add_argument("--symbol", required=True)
     p.add_argument("--side", required=True, choices=["buy", "sell"])
@@ -764,6 +896,7 @@ def main(argv=None):
     p.add_argument("--portfolio", default="trader/portfolio.json")
     p.add_argument("--plan", default="trader/plan.json")
     p.add_argument("--config", default="trader/config.json")
+    p.add_argument("--state", default="trader/state/broker.json")
     clock(p)
     p = sub.add_parser("protect", help="the stop-loss ticket for a filled entry (an SL-M sell)")
     p.add_argument("--symbol", required=True)
@@ -784,7 +917,8 @@ def main(argv=None):
         return 1
     try:
         return {"show": cmd_show, "approve": cmd_approve, "decline": cmd_decline, "result": cmd_result,
-                "fill": cmd_fill, "flatten": cmd_flatten, "protect": cmd_protect, "log": cmd_log}[a.cmd](a)
+                "fill": cmd_fill, "flatten": cmd_flatten, "protect": cmd_protect, "log": cmd_log,
+                "place": cmd_place, "cancel": cmd_cancel}[a.cmd](a)
     except TicketError as e:
         print("ticket.py: %s" % e, file=sys.stderr)
         return 1

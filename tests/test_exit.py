@@ -37,10 +37,12 @@ def run(mod, argv):
     return code, out.getvalue(), err.getvalue()
 
 
-def c(entry_px, stop, target="2R", oh=362.18, ol=354.47, atr=None, n=None):
+def c(entry_px, stop, target="2R", oh=362.18, ol=354.47, atr=None, n=None, tick="0.01"):
+    """The upstream cent-level math: a 1-paisa tick, so every price is on the grid.
+    NSE's real steps (tick=None) are tested in NseTicks."""
     sr, sp = exitp.parse_stop(stop)
     tr, tp = exitp.parse_target(target)
-    return exitp.compute(entry_px, sr, sp, tr, tp, oh, ol, atr, n)
+    return exitp.compute(entry_px, sr, sp, tr, tp, oh, ol, atr, n, tick)
 
 
 class Math(unittest.TestCase):
@@ -133,12 +135,31 @@ class Math(unittest.TestCase):
         self.assertEqual(exitp.atr_of(all_bars)[1], 14)
 
 
+class NseTicks(unittest.TestCase):
+    def test_the_bands(self):
+        for price, tick in ((99, "0.01"), (250, "0.01"), (250.5, "0.05"), (364.18, "0.05"), (1000, "0.05"),
+                            (1412.4, "0.10"), (5000.05, "0.50"), (12000, "1.00"), (25000, "5.00")):
+            self.assertEqual(exitp.nse_tick(price), Decimal(tick), price)
+        self.assertEqual(exitp.nse_tick(364.18, 0.10), Decimal("0.1"))      # "tick_size" in the config wins
+
+    def test_the_reel_on_nse_ticks(self):
+        p = c(364.18, "or-mid", "1R", tick=None)
+        self.assertEqual(p["stop"], Decimal("358.30"))             # 358.325 down to the 0.05 grid
+        self.assertEqual(p["risk"], Decimal("5.88"))
+        self.assertEqual(p["target"], Decimal("370.10"))           # 370.06 UP to the grid: never under 1R
+        self.assertGreaterEqual(p["reward_risk"], Decimal("1.00"))
+        self.assertIn("rounded down to the ₹0.05 tick", p["stop_detail"])
+        p = c(1412.4, "pct:0.5", "2R", None, None, tick=None)    # a ₹0.10 share
+        self.assertEqual((p["stop"], p["target"]), (Decimal("1405.30"), Decimal("1426.60")))
+
+
 class Cli(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp()
         self.cwd = os.getcwd()
         os.chdir(self.d)
         os.mkdir("trader")
+        self.write(os.path.join("trader", "config.json"), {"tick_size": 0.01})   # the upstream paise math
 
     def tearDown(self):
         os.chdir(self.cwd)
@@ -239,21 +260,22 @@ class Cli(unittest.TestCase):
 
     def test_flat_by_config_close_and_late_entries(self):
         self.write(os.path.join("trader", "entry.json"), REEL_ENTRY)
-        self.write(os.path.join("trader", "config.json"), {"flat_by": "15:05", "min_reward_risk": 1.5})
+        self.write(os.path.join("trader", "config.json"), {"flat_by": "15:05", "min_reward_risk": 1.5,
+                                                            "tick_size": 0.01})
         code, text, _ = self.plan("--target", "1R", "--json")
         p = json.loads(text)
         self.assertEqual(p["flat_by"], "15:05")
         self.assertIn("under your min_reward_risk 1.5", p["warnings"][0])
         os.remove(os.path.join("trader", "config.json"))
 
-        self.write(os.path.join("trader", "config.json"), {"flat_by": "15:25"})
+        self.write(os.path.join("trader", "config.json"), {"flat_by": "15:25", "tick_size": 0.01})
         code, text, _ = self.plan("--json")
         self.assertIn("square off intraday (MIS)", json.loads(text)["warnings"][-1])
-        self.write(os.path.join("trader", "config.json"), {"flat_by": "15:30"})
+        self.write(os.path.join("trader", "config.json"), {"flat_by": "15:30", "tick_size": 0.01})
         code, _, err = self.plan()
         self.assertEqual(code, 1)
         self.assertIn("flat_by in the config 15:30 is at or after the 3:30 PM close", err)
-        os.remove(os.path.join("trader", "config.json"))
+        self.write(os.path.join("trader", "config.json"), {"tick_size": 0.01})
 
         self.write(os.path.join("trader", "entry.json"), REEL_ENTRY)
         code, _, err = self.plan("--flat-by", "16:15")
@@ -262,6 +284,14 @@ class Cli(unittest.TestCase):
         code, _, err = self.plan()
         self.assertEqual(code, 1)
         self.assertIn("no time left to hold it", err)
+
+    def test_default_config_uses_nse_ticks(self):
+        os.remove(os.path.join("trader", "config.json"))
+        self.write(os.path.join("trader", "entry.json"), REEL_ENTRY)
+        code, text, err = self.plan("--target", "1R", "--json")
+        self.assertEqual(code, 0, err)
+        p = json.loads(text)
+        self.assertEqual((p["stop"], p["target"], p["risk_per_share"]), (358.3, 370.1, 5.88))
 
     def test_show_without_a_plan(self):
         code, text, _ = run(exitp, ["show"])

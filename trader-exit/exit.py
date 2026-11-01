@@ -51,13 +51,13 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from decimal import Decimal, InvalidOperation, ROUND_FLOOR, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP
 
 UA = "Mozilla/5.0 (compatible; day-trader-skill/2.0; +https://github.com/Jakeschincariol/day-trader-skill)"
 BACKOFF = 5.0
 HOSTS = ("query2", "query1")
 INTERVALS = {"1m": 60, "5m": 300}
-DEFAULTS = {"flat_by": "15:15", "min_reward_risk": 1.0}
+DEFAULTS = {"flat_by": "15:15", "min_reward_risk": 1.0, "tick_size": None}  # tick_size None: NSE's price bands
 ATR_BARS = 14
 MIN_RISK_PCT = Decimal("0.05")     # risk under 0.05% of the price is inside the spread's noise
 CENT = Decimal("0.01")
@@ -200,6 +200,31 @@ def money(x):
     return "₹%s" % format(D(x).quantize(CENT), ",f")
 
 
+# NSE's price steps for shares (cash segment, from April 15 2025). NSE assigns each stock its band
+# from a reference closing price and reviews it, so near a band edge the live price can mislead:
+# set "tick_size" in trader/config.json to the step your broker shows for that stock.
+TICK_BANDS = ((Decimal("250"), Decimal("0.01")), (Decimal("1000"), Decimal("0.05")),
+              (Decimal("5000"), Decimal("0.10")), (Decimal("10000"), Decimal("0.50")),
+              (Decimal("20000"), Decimal("1.00")))
+TOP_TICK = Decimal("5.00")
+
+
+def nse_tick(price, override=None):
+    """The price step an order at this price must sit on."""
+    if override:
+        return D(override, "tick_size")
+    p = D(price)
+    for upto, tick in TICK_BANDS:
+        if p <= upto:
+            return tick
+    return TOP_TICK
+
+
+def to_tick(x, tick, rounding):
+    """A price onto the tick grid: ROUND_FLOOR for a long's stop, ROUND_CEILING for its target."""
+    return ((D(x) / tick).to_integral_value(rounding=rounding) * tick).quantize(CENT)
+
+
 def num(x):
     """1, 1.5, 2.25: a Decimal without trailing zeros."""
     s = format(D(x).normalize(), "f")
@@ -252,8 +277,9 @@ def r_label(r):
 
 
 def compute(entry, stop_rule, stop_param, target_rule, target_param, or_high=None, or_low=None,
-            atr=None, atr_bars=None):
-    """The stop, the target and the risk, in exact cents. Raises PlanError with the reason."""
+            atr=None, atr_bars=None, tick=None):
+    """The stop, the target and the risk, in exact paise, on NSE's tick grid (the stop rounds
+    down, away from the entry; the target rounds up, so its R never shrinks). Raises PlanError."""
     e = cents(entry)
     if e <= 0:
         raise PlanError("the entry price must be above ₹0")
@@ -286,9 +312,11 @@ def compute(entry, stop_rule, stop_param, target_rule, target_param, or_high=Non
             num(a.quantize(Decimal("0.0001"))), atr_bars, " (fewer than 14 so far)" if atr_bars < ATR_BARS else "")
     else:
         raise PlanError("unknown stop rule %r" % stop_rule)
-    stop = floor_cents(raw)
+    step = nse_tick(e, tick)
+    stop = to_tick(raw, step, ROUND_FLOOR)
     if stop != D(raw):
-        detail = (detail + ", rounded down" if detail else "₹%s rounded down" % num(raw))
+        how = "rounded down to the ₹%s tick" % num(step)
+        detail = (detail + ", " + how if detail else "₹%s %s" % (num(raw), how))
     if stop >= e:
         raise PlanError("the stop %s (%s) is at or above the entry %s: a long's stop goes under the entry"
                         % (money(stop), label, money(e)))
@@ -301,10 +329,10 @@ def compute(entry, stop_rule, stop_param, target_rule, target_param, or_high=Non
                         "survive the spread, normal wiggle would stop you out. Widen it."
                         % (money(risk), money(floor_risk.quantize(CENT, rounding=ROUND_HALF_UP)), money(e)))
     if target_rule == "r":
-        target = cents(e + target_param * risk)
+        target = to_tick(e + target_param * risk, step, ROUND_CEILING)
         t_label = r_label(target_param)
     else:
-        target = cents(target_param)
+        target = to_tick(target_param, step, ROUND_CEILING)
         t_label = None
     if target <= e:
         raise PlanError("the target %s is at or below the entry %s: a long's target goes above it"
@@ -578,7 +606,7 @@ def build_plan(a, now_utc):
                             % (info["interval"], info["symbol"], day, len(bars)))
         atr, atr_n = atr_of(bars)
     c = compute(info["entry"], stop_rule, stop_param, target_rule, target_param, info["or_high"], info["or_low"],
-                atr, atr_n)
+                atr, atr_n, cfg.get("tick_size"))
     flat_by, flat_note = resolve_flat_by(day, a.flat_by, cfg, entry_time)
     orr = None
     if info["or_high"] is not None and info["or_low"] is not None:

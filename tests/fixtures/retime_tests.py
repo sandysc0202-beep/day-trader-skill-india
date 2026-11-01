@@ -40,9 +40,9 @@ def sub_clock(mt):
     secs = (":" + sec) if sec else ""
     h24 = h
     if ampm:
-        if ampm.upper().startswith("P") and h != 12:
+        if ampm.strip().upper().startswith("P") and h != 12:
             h24 = h + 12
-        if ampm.upper().startswith("A") and h == 12:
+        if ampm.strip().upper().startswith("A") and h == 12:
             h24 = 0
     elif h < 9:
         return mt.group(0)

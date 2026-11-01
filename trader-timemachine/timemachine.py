@@ -16,13 +16,13 @@ session in the data.
 
 How the replays work (the reel's sim.py, same algorithm, same random draws):
   1. Fetch 60 days of 5-minute bars (Yahoo v8 chart, range=60d interval=5m;
-     one request). Keep only FULL sessions before the plan's date: 78 bars,
+     one request). Keep only FULL sessions before the plan's date: 75 bars,
      9:15 to 3:30 India time (IST). Half days, gaps and today are left out.
-  2. The pool: for every bar slot 1..77 of the day, each past session's bar as
+  2. The pool: for every bar slot 1..74 of the day, each past session's bar as
      ratios to the previous bar's close: (open, high, low, close) / prev close.
   3. One replay starts at the entry price and walks the rest of the session.
      For each bar i it picks a slot j = i + randint(-window, window), kept in
-     1..77, then one past bar from pool[j] (random.choice), and scales it to
+     1..74, then one past bar from pool[j] (random.choice), and scales it to
      the current price. The stop is checked before the target in every bar,
      so a bar that touches both counts as the stop (the conservative call).
   4. Outcomes: "target" or "stop" (whichever was touched first), or "neither"
@@ -95,6 +95,7 @@ STRONG = 0.15
 MANY_NEITHER = 0.40
 EPOCH = datetime.datetime(1970, 1, 1)
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+NSE_EARLY_CLOSE = {}  # NSE has no scheduled half days; kept so a future one can be listed
 EARLY_MIN = 13 * 60
 
 
@@ -296,7 +297,7 @@ def split_sessions(bars):
 
 
 def full_sessions(days, before):
-    """Full sessions (all 78 bars) strictly before the plan's date, oldest first,
+    """Full sessions (all 75 bars) strictly before the plan's date, oldest first,
     and the short ones that were left out (half days, gaps)."""
     full, short = [], []
     for d in sorted(days):
@@ -557,7 +558,7 @@ def normalize_plan(raw, src="flags"):
         or_min = int(or_min)
     except (TypeError, ValueError):
         raise TMError("opening_range.minutes must be a number")
-    if or_min < 5 or or_min % 5 or or_min >= 390:
+    if or_min < 5 or or_min % 5 or or_min >= SESSION_BARS * 5:
         raise TMError("opening_range.minutes must be a multiple of 5 (got %s)" % or_min)
     risk = (entry - stop) if long else (stop - entry)
     return {

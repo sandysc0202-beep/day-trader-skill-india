@@ -9,7 +9,7 @@ order as if each PASS had filled, so buys that are fine one by one but break
 a limit together are caught.
 
     python3 check.py                                 # the trader/ files, writes trader/state/risk.json
-    python3 check.py --now "2026-10-19 10:15"        # pin the clock (New York time)
+    python3 check.py --now "2026-10-19 10:15"        # pin the clock (India time, IST)
     python3 check.py --orders trader/orders.json --json
     python3 check.py --no-write                      # check without recording the verdicts
 
@@ -47,9 +47,9 @@ What blocks an entry (on top):
   daily loss    the max losses at the stops of today's entries plus this one
                 over max_daily_loss_usd (win or lose, each counts in full)
   trades        max_trades_per_day entries already placed today
-  window        before no_entries_before or after no_entries_after (New York
-                time), or the market is closed (weekend, NYSE holiday, outside
-                9:30 to the close; on a 1:00 p.m. early close the window ends
+  window        before no_entries_before or after no_entries_after (IST
+                time), or the market is closed (weekend, NSE holiday, outside
+                9:15 to the close; on a 1:00 p.m. early close the window ends
                 3 hours earlier too)
   pdt           only with "pdt_guard": true: 3 day trades already in the last
                 5 business days (a 4th would trip the old pattern-day-trader rule)
@@ -71,7 +71,7 @@ DEFAULTS = {
     "budget": None, "cash_buffer_pct": 10, "max_position_pct": 75, "max_order_usd": 4000,
     "min_order_usd": 5, "max_loss_per_trade_usd": 50, "max_daily_loss_usd": 150, "max_trades_per_day": 3,
     "max_orders_per_day": 10, "min_reward_risk": 1.0, "require_stop": True,
-    "no_entries_before": "09:45", "no_entries_after": "15:30", "flat_by": "15:55",
+    "no_entries_before": "09:30", "no_entries_after": "15:00", "flat_by": "15:15",
     "paper": True, "blocked": [], "allow_options": False, "allow_margin": False, "allow_short": False,
     "pdt_guard": False,
 }
@@ -120,7 +120,7 @@ class RiskError(Exception):
     pass
 
 
-# ---------------------------------------------------------------- time (New York, no tz files)
+# ---------------------------------------------------------------- time (India, IST, no tz files)
 
 IST_OFFSET = datetime.timedelta(hours=5, minutes=30)  # India Standard Time: UTC+5:30 all year, no daylight saving
 
@@ -138,14 +138,14 @@ def ist_to_utc(local):
 
 
 def parse_now(text):
-    """ISO time -> naive UTC. A time without an offset is taken as New York time."""
+    """ISO time -> naive UTC. A time without an offset is taken as India time (IST)."""
     if not text:
         return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0, tzinfo=None)
     t = text.strip().replace("Z", "+00:00")
     try:
         dt = datetime.datetime.fromisoformat(t)
     except ValueError:
-        raise RiskError("--now wants a time like \"2026-10-19 10:15\" (New York) or ...Z (UTC)")
+        raise RiskError("--now wants a time like \"2026-10-19 10:15\" (IST) or ...Z (UTC)")
     if dt.tzinfo is None:
         return ist_to_utc(dt)
     return (dt - dt.utcoffset()).replace(tzinfo=None)
@@ -164,12 +164,12 @@ def parse_utc(text):
 
 
 def trading_day(d):
-    """(is_trading_day, reason). Weekends and the NYSE holiday list."""
+    """(is_trading_day, reason). Weekends and the NSE holiday list."""
     if d.weekday() >= 5:
         return False, "weekend"
     name = NSE_HOLIDAYS.get(d.isoformat())
     if name:
-        return False, "NYSE holiday: " + name
+        return False, "NSE holiday: " + name
     return True, ""
 
 
@@ -179,7 +179,7 @@ def hhmm(value, key):
         return None
     m = HHMM.match(str(value).strip())
     if not m:
-        raise RiskError("%s must be a New York time like \"09:45\", got %r" % (key, value))
+        raise RiskError("%s must be an India time (IST) like \"09:30\", got %r" % (key, value))
     return datetime.time(int(m.group(1)), int(m.group(2)))
 
 
@@ -189,7 +189,7 @@ def _shift(t, hours):
 
 
 def window_check(now_ist, c):
-    """Reasons an entry cannot be placed now (New York time). Empty when the window is off."""
+    """Reasons an entry cannot be placed now (India time, IST). Empty when the window is off."""
     before = hhmm(c.get("no_entries_before"), "no_entries_before")
     after = hhmm(c.get("no_entries_after"), "no_entries_after")
     if before is None and after is None:
@@ -197,31 +197,31 @@ def window_check(now_ist, c):
     warns = []
     d, t = now_ist.date(), now_ist.time().replace(second=0, microsecond=0)
     if d.year not in CALENDAR_YEARS:
-        warns.append("the holiday list covers %s only: check nyse.com for %s"
+        warns.append("the holiday list covers %s only: check nseindia.com for %s"
                      % (" and ".join(map(str, CALENDAR_YEARS)), d.isoformat()))
     ok, why = trading_day(d)
     stamp = now_ist.strftime("%a %Y-%m-%d %H:%M")
     if not ok:
-        return ["window: the market is closed today (%s, %s New York)" % (why, stamp)], warns
+        return ["window: the market is closed today (%s, %s IST)" % (why, stamp)], warns
     close = EARLY if d.isoformat() in NSE_EARLY_CLOSE else CLOSE
     if t < OPEN or now_ist.time() >= close:
-        return ["window: the market is closed (%s New York; the session is %s to %s)"
+        return ["window: the market is closed (%s IST; the session is %s to %s)"
                 % (stamp, OPEN.strftime("%H:%M"), close.strftime("%H:%M"))], warns
     if close == EARLY and after is not None:
         after = _shift(after, 3)
         warns.append("early close at 1:00 p.m. today (%s): no new entries after %s"
                      % (NSE_EARLY_CLOSE[d.isoformat()], after.strftime("%H:%M")))
     if before is not None and t < before:
-        return ["window: no new entries before %s New York (it is %s)" % (before.strftime("%H:%M"),
+        return ["window: no new entries before %s IST (it is %s)" % (before.strftime("%H:%M"),
                                                                           t.strftime("%H:%M"))], warns
     if after is not None and t > after:
-        return ["window: no new entries after %s New York (it is %s)" % (after.strftime("%H:%M"),
+        return ["window: no new entries after %s IST (it is %s)" % (after.strftime("%H:%M"),
                                                                          t.strftime("%H:%M"))], warns
     return [], warns
 
 
 def business_days(today, n=5):
-    """The last n NYSE trading days up to and including today, newest first."""
+    """The last n NSE trading days up to and including today, newest first."""
     out, d = [], today
     for _ in range(40):
         if trading_day(d)[0]:
@@ -351,7 +351,7 @@ def day_trades(state, today):
 def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=None, price_times=None):
     """Pure function. Returns {"results": [...], "pass": n, "block": n, "warnings": [...]}.
 
-    now          naive UTC (default: the real clock); its New York date is "today"
+    now          naive UTC (default: the real clock); its India date is "today"
     price_times  {SYM: naive UTC time of that price}; None = every price counts as fresh"""
     c = dict(DEFAULTS)
     c.update(cfg or {})
@@ -671,7 +671,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
 
     return {
         "date": today,
-        "now_new_york": now_ist.strftime("%Y-%m-%d %H:%M"),
+        "now_ist": now_ist.strftime("%Y-%m-%d %H:%M"),
         "paper": bool(c.get("paper", True)),
         "results": results,
         "pass": sum(1 for r in results if r["verdict"] == "PASS"),
@@ -709,8 +709,8 @@ def report(res):
         for x in r["warnings"]:
             lines.append("        ~ " + x)
     lines.append("")
-    lines.append("%d passed, %d blocked at %s New York. Cash after the passed orders: %s (%s account)."
-                 % (res["pass"], res["block"], res["now_new_york"], money(res["cash_after"]),
+    lines.append("%d passed, %d blocked at %s IST. Cash after the passed orders: %s (%s account)."
+                 % (res["pass"], res["block"], res["now_ist"], money(res["cash_after"]),
                     "paper" if res["paper"] else "LIVE"))
     if res["block"]:
         lines.append("Blocked orders do not go to the broker. Fix the order or your rules, then check again.")
@@ -751,8 +751,8 @@ def main(argv=None):
                     help="your account; if missing, a fresh account funded with the budget")
     ap.add_argument("--prices", default="trader/prices.json")
     ap.add_argument("--state", default="trader/state/broker.json", help="what trader-broker placed today")
-    ap.add_argument("--now", help="pretend it is this New York time, e.g. \"2026-10-19 10:15\"")
-    ap.add_argument("--today", help="YYYY-MM-DD (default: today in New York)")
+    ap.add_argument("--now", help="pretend it is this India time (IST), e.g. \"2026-10-19 10:15\"")
+    ap.add_argument("--today", help="YYYY-MM-DD (default: today in India)")
     ap.add_argument("--out", default="trader/state/risk.json", help="where the verdicts are recorded")
     ap.add_argument("--no-write", action="store_true", help="do not record the verdicts")
     ap.add_argument("--json", action="store_true")

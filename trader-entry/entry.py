@@ -11,13 +11,13 @@ moment to get in. Standard library only. Long side only. It never places an orde
 
 Setups (v2 plans longs only):
   orb    opening-range breakout. The range is the high and low of the first
-         --or-minutes (default 15: the 9:30, 9:35 and 9:40 five-minute bars).
+         --or-minutes (default 15: the 9:15, 9:20 and 9:25 five-minute bars).
          It triggers on the first COMPLETED bar after the range that CLOSES
          above the range high. A wick above the high is not a trigger.
   level  the first completed bar that closes above --level (for example a
          20-day high from trader-scanner).
   --min-volume-x X  the trigger bar also needs at least X times the average
-         volume of the opening-range bars (the 9:30 bar carries the opening
+         volume of the opening-range bars (the 9:15 bar carries the opening
          auction, so 1.0 is already a high bar).
 
 A trigger's time is the trigger bar's CLOSE time (the 10:10 bar closes at
@@ -31,7 +31,7 @@ on a 1:00 p.m. early close the cutoff moves up three hours with the close);
 no-data (the market is closed today or Yahoo sent no bars).
 
 trader/config.json (optional): "no_entries_before" (09:45) and
-"no_entries_after" (15:30), New York time.
+"no_entries_after" (15:00), India time (IST).
 
 watch wakes just after each bar closes (bars only change then), re-polls every
 --every seconds (default 30) while Yahoo has not posted the new bar, prints one
@@ -68,7 +68,7 @@ GRACE = 2        # seconds after a bar closes before watch asks for it
 SETTLE = 60      # seconds a closed bar may wait for Yahoo's data to catch up
 HOSTS = ("query2", "query1")
 INTERVALS = {"1m": 60, "5m": 300}
-DEFAULTS = {"no_entries_before": "09:45", "no_entries_after": "15:30"}
+DEFAULTS = {"no_entries_before": "09:30", "no_entries_after": "15:00"}
 EPOCH = datetime.datetime(1970, 1, 1)
 
 NSE_HOLIDAYS = {  # equity segment, weekdays only; from NSE's 2026 holiday circular
@@ -136,11 +136,11 @@ def iso(utc):
 
 def parse_now(text):
     """--now -> naive UTC. "2026-10-19 10:15" (or ...T10:15, or just 10:15 for
-    today) is New York time; an offset or Z makes it absolute."""
+    today) is India time (IST); an offset or Z makes it absolute."""
     if not text:
         return utc_now()
     t = text.strip()
-    if t.upper().endswith(" ET"):
+    if t.upper().endswith(" IST"):
         t = t[:-3].strip()
     if re.match(r"^\d{1,2}:\d{2}$", t):
         t = "%s %s" % (to_ist(utc_now()).date().isoformat(), t.zfill(5))
@@ -148,7 +148,7 @@ def parse_now(text):
     try:
         dt = datetime.datetime.fromisoformat(t)
     except ValueError:
-        raise EntryError('--now wants a New York time like "2026-10-19 10:15" (or ...Z for UTC)')
+        raise EntryError('--now wants an India time (IST) like "2026-10-19 10:15" (or ...Z for UTC)')
     if dt.tzinfo is None:
         return ist_to_utc(dt)
     return (dt - dt.utcoffset()).replace(tzinfo=None)
@@ -157,7 +157,7 @@ def parse_now(text):
 def parse_hhmm(text, what):
     m = re.match(r"^\s*(\d{1,2}):(\d{2})\s*$", str(text))
     if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
-        raise EntryError("%s wants a New York time like 15:30, not %r" % (what, text))
+        raise EntryError("%s wants an India time (IST) like 15:30, not %r" % (what, text))
     return datetime.time(int(m.group(1)), int(m.group(2)))
 
 
@@ -177,17 +177,17 @@ def ampm(t):
 
 
 def trading_day(d):
-    """(is_trading_day, reason). Weekends and the NYSE holiday list."""
+    """(is_trading_day, reason). Weekends and the NSE holiday list."""
     if d.weekday() >= 5:
         return False, "weekend"
     name = NSE_HOLIDAYS.get(d.isoformat())
     if name:
-        return False, "NYSE holiday: " + name
+        return False, "NSE holiday: " + name
     return True, ""
 
 
 def session(d):
-    """(open_time, close_time) in New York time, or None if closed all day."""
+    """(open_time, close_time) in India time (IST), or None if closed all day."""
     ok, _ = trading_day(d)
     if not ok:
         return None
@@ -198,7 +198,7 @@ def next_open(d):
     nd = d + datetime.timedelta(days=1)
     for _ in range(15):
         if session(nd):
-            return "%s 09:30" % nd.isoformat()
+            return "%s 09:15" % nd.isoformat()
         nd += datetime.timedelta(days=1)
     return None
 
@@ -374,7 +374,7 @@ def r2(x):
 
 def early_cutoff(day, t, close_dt):
     """A cutoff on an early-close day moves up with the close: 15:30 (30 minutes
-    before a 16:00 close) becomes 12:30 before a 1:00 p.m. close. A cutoff that
+    before a 15:30 close) becomes 12:30 before a 1:00 p.m. close. A cutoff that
     is already before the early close stays."""
     at = datetime.datetime.combine(day, t)
     if at < close_dt:
@@ -408,7 +408,7 @@ def evaluate(chart, now_utc, setup="orb", or_minutes=15, interval="5m", level=No
     res["data_time"] = to_ist(utc_of(dt)).strftime("%Y-%m-%d %H:%M:%S") if dt else None
     ok, why = trading_day(day)
     if not ok:
-        res.update(status="no-data", phase="closed", reason="the NYSE is closed today (%s)" % why,
+        res.update(status="no-data", phase="closed", reason="the NSE is closed today (%s)" % why,
                    next_open=next_open(day))
         return res
     o, c = session(day)
@@ -453,7 +453,7 @@ def evaluate(chart, now_utc, setup="orb", or_minutes=15, interval="5m", level=No
     res["bars_closed"] = len(bars)
 
     if local < open_dt:
-        res.update(phase="pre-open", reason="the NYSE opens at 9:30%s" % (
+        res.update(phase="pre-open", reason="the NSE opens at 9:15%s" % (
             " and the %d-minute range is set at %s" % (or_minutes, short(or_end)) if setup == "orb" else ""))
         return res
 
@@ -573,7 +573,7 @@ def describe(res):
     """Plain lines for a person."""
     when = datetime.datetime.strptime(res["now"], "%Y-%m-%d %H:%M:%S")
     bars = "5-minute" if res["interval"] == "5m" else "1-minute"
-    head = "%s  %s %s ET  %s on %s bars (Yahoo, free, can lag)" % (
+    head = "%s  %s %s IST  %s on %s bars (Yahoo, free, can lag)" % (
         res["symbol"], when.strftime("%a %Y-%m-%d"), when.strftime("%H:%M"), setup_name(res), bars)
     if res.get("data_time") and res["data_time"] <= res["now"] and res["data_time"][:10] == res["date"]:
         head += ", data to %s" % res["data_time"][11:]
@@ -616,12 +616,12 @@ def describe(res):
         if res["status"] == "expired":
             out.append("No entry on this setup today. Nothing was placed.")
         if res.get("next_open"):
-            out.append("Next open: %s New York." % res["next_open"])
+            out.append("Next open: %s IST." % res["next_open"])
     if res.get("early_close"):
         out.append("Early close today at 1:00 p.m. (%s): no new entries after %s." % (
             res["early_close"], res["no_entries_after"]))
     if not res.get("calendar_known"):
-        out.append("Holiday list covers %s only: check nyse.com for this date." % " and ".join(map(str, CALENDAR_YEARS)))
+        out.append("Holiday list covers %s only: check nseindia.com for this date." % " and ".join(map(str, CALENDAR_YEARS)))
     return out
 
 
@@ -693,7 +693,7 @@ def watch_loop(provider, clock, sleep, emit, opts, every=30, until=None, max_err
         close_dt = datetime.datetime.combine(day, s[1])
         if local < open_dt + datetime.timedelta(seconds=step):
             if not said_preopen:
-                emit("%s ET  %s: watching from the first bar's close at %s." % (
+                emit("%s IST  %s: watching from the first bar's close at %s." % (
                     local.strftime("%H:%M"), "not open yet" if local < open_dt else "open, no bar closed yet",
                     short(open_dt + datetime.timedelta(seconds=step))))
                 said_preopen = True
@@ -704,7 +704,7 @@ def watch_loop(provider, clock, sleep, emit, opts, every=30, until=None, max_err
             errors = 0
         except EntryError as e:
             errors += 1
-            emit("%s ET  could not read bars: %s" % (local.strftime("%H:%M:%S"), e))
+            emit("%s IST  could not read bars: %s" % (local.strftime("%H:%M:%S"), e))
             if errors >= max_errors:
                 emit("Stopping after %d failed reads in a row." % errors)
                 return 1, None
@@ -900,7 +900,7 @@ def main(argv=None):
         p.add_argument("--level", type=float, help="the price to close above (--setup level)")
         p.add_argument("--min-volume-x", type=float, help="trigger bar volume vs the range bars' average")
         p.add_argument("--side", default="buy", choices=["buy", "long", "sell", "short"], help="v2: buy only")
-        p.add_argument("--now", help='pretend it is this New York time, e.g. "2026-10-19 10:15"')
+        p.add_argument("--now", help='pretend it is this India time (IST), e.g. "2026-10-19 10:15"')
         p.add_argument("--offline", metavar="PATH", help="saved Yahoo chart JSON (.json/.json.gz) or a folder")
         p.add_argument("--config", default="trader/config.json")
 
@@ -914,7 +914,7 @@ def main(argv=None):
     p.add_argument("symbol")
     common(p)
     p.add_argument("--every", type=float, default=30, help="seconds between polls while Yahoo is behind")
-    p.add_argument("--until", help="stop at this New York time (HH:MM)")
+    p.add_argument("--until", help="stop at this India time (IST) (HH:MM)")
     p.add_argument("--out", default="trader/entry.json", help="where a trigger is written")
     p = sub.add_parser("watchlist", help="check every hit in trader/watchlist.json")
     common(p)

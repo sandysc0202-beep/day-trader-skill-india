@@ -23,8 +23,8 @@
         "risk_per_share": 5.86,
         "max_loss": 46.88,
         "setup": "orb",
-        "entry_time": "10:15 AM",
-        "flat_by": "15:55"
+        "entry_time": "10:00 AM",
+        "flat_by": "15:15"
       }
     }
   ]

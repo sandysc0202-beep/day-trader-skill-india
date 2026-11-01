@@ -2,7 +2,7 @@
 """Price alerts and the NSE clock for trader-alerts. Standard library only.
 
     python3 alerts.py clock                          # is the NSE open? next open / close
-    python3 alerts.py quote TSLA --write             # quotes -> trader/prices.json
+    python3 alerts.py quote RELIANCE --write         # quotes -> trader/prices.json
     python3 alerts.py quote --holdings --write       # every ticker in your portfolio and plan
     python3 alerts.py add --from-plan                # stop, target and flat-by-close from trader/plan.json
     python3 alerts.py add --symbol TSLA --stop 358.32
@@ -22,9 +22,9 @@ Rule types:
                   (or from "ref" if you give one); "direction": "up" or "down"
   opening_bell    the NSE opened today (rings once per trading day)
   time            the IST clock passed "at" (HH:MM) on a trading day
-                  (rings once per trading day); "before_close": true moves it
-                  3 hours earlier on a 1:00 p.m. early close, so a 15:15
-                  "flat by close" rings at 12:15 on those days
+                  (rings once per trading day); "before_close": true marks
+                  it as tied to the close (it would move with an early close;
+                  NSE has no scheduled ones)
 
 A rule with "date" is only watched on that India date (rules from a plan
 are for the plan's day only). An above / below alert rings ONCE and then stays
@@ -32,31 +32,29 @@ quiet until you reset it, unless the rule has "rearm": true (it re-arms when
 the price crosses back). A pct_move alert rings at most once per day.
 
 Quotes (free, delayed, unofficial; for alerts only, never for timing an order):
-  yahoo   https://query2.finance.yahoo.com/v8/finance/chart/TSLA (falls back to
-          query1 on a 429 or a 5xx; one retry with a pause on a 429; one
-          request per ticker, half a second apart; the default)
-  stooq   https://stooq.com/q/l/?s=tsla.us&f=sd2t2ohlcv&h&e=csv (Stooq's free
-          CSV; it answered 404 on 2026-10-13, kept for when it is back)
-  --offline DIR reads DIR/<source>-<TICKER>.json|csv (or .json.gz) instead.
+  yahoo   https://query2.finance.yahoo.com/v8/finance/chart/RELIANCE.NS (an
+          NSE symbol gets .NS; falls back to query1 on a 429 or a 5xx; one
+          retry with a pause on a 429; one request per ticker, half a second
+          apart). The US pack's second source, Stooq, has no NSE quotes.
+  --offline DIR reads DIR/yahoo-<TICKER>.json (or .json.gz) instead.
 
 NSE calendar: the 2026 equity-segment trading holidays from NSE's holiday
 circular (https://www.nseindia.com/resources/exchange-communication-holidays).
 NSE has no scheduled half days. The one-hour Muhurat session on Diwali is not
-covered: check NSE's circular for its time.
-Outside those years the clock says the holiday list is unknown.
+covered: check NSE's circular for its time. Outside 2026 the clock says the
+holiday list is unknown (NSE publishes the next year's list in December).
 """
 
 import argparse
-import csv
 import datetime
 import gzip
-import io
 import json
 import os
 import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 UA = "Mozilla/5.0 (compatible; day-trader-skill/2.0; +https://github.com/Jakeschincariol/day-trader-skill)"
@@ -173,33 +171,10 @@ def market_status(now_utc):
 
 # ---------------------------------------------------------------- quotes
 
-def stooq_url(sym):
-    return "https://stooq.com/q/l/?s=%s.us&f=sd2t2ohlcv&h&e=csv" % sym.lower().replace(".", "-")
-
-
 def yahoo_url(sym, host=YAHOO_HOSTS[0]):
-    return "https://%s/v8/finance/chart/%s?range=1d&interval=1d" % (host, sym.upper().replace(".", "-"))
-
-
-def parse_stooq(text, sym):
-    """Symbol,Date,Time,Open,High,Low,Close,Volume -> quote. N/D means no data."""
-    rows = list(csv.DictReader(io.StringIO(text.strip())))
-    if not rows:
-        raise AlertError("Stooq returned no rows for %s" % sym)
-    r = {k.strip().lower(): (v or "").strip() for k, v in rows[0].items() if k}
-    close = r.get("close", "")
-    if not close or close.upper() == "N/D":
-        raise AlertError("Stooq has no data for %s (check the ticker)" % sym)
-
-    def f(k):
-        v = r.get(k, "")
-        try:
-            return float(v)
-        except ValueError:
-            return None
-    return {"symbol": sym.upper(), "price": float(close), "open": f("open"), "high": f("high"),
-            "low": f("low"), "prev_close": None, "time": ("%s %s" % (r.get("date", ""), r.get("time", ""))).strip(),
-            "source": "stooq"}
+    """NSE symbol -> Yahoo's chart URL: RELIANCE -> RELIANCE.NS, M&M -> M%26M.NS."""
+    ysym = sym.upper() if sym.upper().endswith(".NS") else sym.upper() + ".NS"
+    return "https://%s/v8/finance/chart/%s?range=1d&interval=1d" % (host, urllib.parse.quote(ysym, safe="-."))
 
 
 def parse_yahoo(text, sym):
@@ -279,8 +254,7 @@ def fetch_yahoo(sym, timeout=20):
 
 
 def _offline_text(folder, source, sym):
-    ext = "csv" if source == "stooq" else "json"
-    base = os.path.join(folder, "%s-%s.%s" % (source, sym, ext))
+    base = os.path.join(folder, "%s-%s.json" % (source, sym))
     if os.path.exists(base):
         with open(base, encoding="utf-8") as fh:
             return fh.read()
@@ -301,8 +275,8 @@ def get_quotes(symbols, source="yahoo", offline=None, pause=PAUSE):
             else:
                 if i and pause:
                     _sleep(pause)
-                text = fetch(stooq_url(sym)) if source == "stooq" else fetch_yahoo(sym)
-            quotes[sym] = parse_stooq(text, sym) if source == "stooq" else parse_yahoo(text, sym)
+                text = fetch_yahoo(sym)
+            quotes[sym] = parse_yahoo(text, sym)
         except AlertError as e:
             errors.append(str(e))
     return quotes, errors
@@ -700,8 +674,8 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd")
 
     def net(p):
-        p.add_argument("--source", default="yahoo", choices=["yahoo", "stooq"])
-        p.add_argument("--offline", metavar="DIR", help="read <source>-<TICKER>.json|csv files, no network")
+        p.add_argument("--source", default="yahoo", choices=["yahoo"])
+        p.add_argument("--offline", metavar="DIR", help="read yahoo-<TICKER>.json files, no network")
         p.add_argument("--now", help="pretend it is this time (no offset = India time, IST)")
         p.add_argument("--json", action="store_true")
 

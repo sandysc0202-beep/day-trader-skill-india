@@ -250,6 +250,61 @@ class Bridge(Base):
         fy.quotes(["S%d" % i for i in range(120)])
         self.assertEqual(len([c for c in self.fake.calls if "/data/quotes" in c[1]]), 3)   # standard: 50 a GET
 
+    def test_a_refused_bulk_request_falls_back_to_normal_quotes(self):
+        """Some Prime accounts get HTTP 403 for the bulk POST: GET requests of 50, and not again today."""
+        with open(fy.APP_CONFIG, "w") as fh:
+            json.dump({"fyers_plan": "prime"}, fh)
+        real = self.fake
+
+        def no_post(req, timeout=20):
+            if req.get_method() == "POST":
+                real.calls.append(("POST", req.full_url, {}))
+                raise fy.urllib.error.HTTPError(req.full_url, 403, "Forbidden", {}, io.BytesIO(b"<html>403</html>"))
+            return real(req, timeout)
+        fy._urlopen = no_post
+        del fy._bulk_refused[:]
+        try:
+            q = fy.quotes(["RELIANCE"] + ["S%d" % i for i in range(59)])
+            self.assertIn("RELIANCE", q)                                     # still FYERS' price
+            methods = [m for m, u, _ in self.fake.calls if "/data/quotes" in u]
+            self.assertEqual(methods, ["POST", "GET", "GET"])                # 60 symbols: two GETs of up to 50
+            self.assertFalse(fy.bulk_quotes_ok())
+            with open(fy.QUOTES_MODE) as fh:
+                self.assertIn("403", json.load(fh)["why"])
+            del fy._bulk_refused[:]
+            self.assertFalse(fy.bulk_quotes_ok())                            # remembered for every tool today
+            del self.fake.calls[:]
+            fy.quotes(["RELIANCE"])
+            self.assertEqual([m for m, u, _ in self.fake.calls if "/data/quotes" in u], ["GET"])
+        finally:
+            del fy._bulk_refused[:]
+
+    def test_fyers_only_never_uses_yahoo(self):
+        bridge = entry.fyers_bridge()
+        with open(fy.APP_CONFIG, "w") as fh:
+            json.dump({"fyers_only": True}, fh)
+        self.assertTrue(bridge.fyers_only())
+        os.remove(fy.TOKEN)                                                  # not logged in today
+        self.assertEqual(bridge.data_source(), "fyers")                      # still FYERS: no quiet Yahoo
+        yahoo = []
+        real_open = entry._open_url
+        entry._open_url = lambda url, timeout=20: yahoo.append(url) or "{}"
+        try:
+            with self.assertRaises(entry.EntryError) as e:
+                entry.yahoo_get(entry.chart_path("RELIANCE", "1d", "5m"))
+        finally:
+            entry._open_url = real_open
+        self.assertIn("FYERS only is on", str(e.exception))
+        self.assertIn("not logged in to FYERS", str(e.exception))
+        self.assertEqual(yahoo, [])
+
+        class A:
+            offline, json, quiet = None, True, True
+        self.token(fy.token_day(fy.ist_now()))
+        with self.assertRaises(scan.ScanError) as e:                         # standard plan: no Yahoo market scan
+            scan.pick_source(["S%d" % i for i in range(2000)], A)
+        self.assertIn("switch the plan to Prime", str(e.exception))
+
     def test_a_scan_asks_for_quotes_once(self):
         fy.yahoo_compat(scan.spark_path(["RELIANCE", "INFY", "TCS"], "1d", "5m"), self.now)
         self.assertEqual(len([c for c in self.fake.calls if "/data/quotes" in c[1]]), 1)

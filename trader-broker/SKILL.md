@@ -133,7 +133,12 @@ day, scans of up to 40 stocks on FYERS, bigger ones on Yahoo) or `"prime"`
 market on FYERS). Just under FYERS' own limits, counted across every tool in
 `trader/state/fyers_calls.json`: the third minute over the limit blocks the
 API for the day. When FYERS fails (down, logged out, the day's calls used
-up), each tool says so on one line and uses Yahoo instead.
+up), each tool says so on one line and uses Yahoo instead, unless
+`"fyers_only": true` is set: then it stops with the FYERS error, so nothing is
+ever decided on Yahoo's delayed prices without the user knowing. If FYERS
+refuses Prime's bulk quote request (HTTP 403 on some accounts), quotes go in
+normal batches of 50 and the bulk request is skipped for the day
+(`trader/state/fyers_quotes.json`).
 `TRADER_DATA_SOURCE=fyers` or `=yahoo` forces either; `FYERS_PLAN` overrides
 the config.
 

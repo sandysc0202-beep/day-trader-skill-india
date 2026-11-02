@@ -376,8 +376,12 @@ def fyers_bridge():
 _fell_back = []
 
 
-def fyers_fallback(err):
-    """FYERS failed (down, logged out, a limit): say so once on stderr, and Yahoo answers instead."""
+def fyers_fallback(err, error_class=Exception):
+    """FYERS failed (down, logged out, a limit): say so once on stderr, and Yahoo answers
+    instead. With "fyers_only" on, there is no Yahoo backup: the failure is the answer."""
+    fy = sys.modules.get("fyers_api")
+    if fy is not None and fy.fyers_only():
+        raise error_class("FYERS only is on, so no Yahoo backup: %s" % err)
     if not _fell_back:
         sys.stderr.write("FYERS: %s; using Yahoo for this instead.\n" % err)
     _fell_back.append(str(err))
@@ -391,7 +395,7 @@ def yahoo_get(path):
         try:
             return fy.yahoo_compat(path)
         except fy.FyersError as e:
-            fyers_fallback(e)
+            fyers_fallback(e, PlanError)
     last = "no answer"
     for host in HOSTS:
         url = "https://%s.finance.yahoo.com%s" % (host, path)

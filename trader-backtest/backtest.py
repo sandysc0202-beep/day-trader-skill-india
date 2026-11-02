@@ -173,6 +173,17 @@ def fyers_module():
     return fyers_api if fyers_api.data_source() == "fyers" else None
 
 
+def fyers_only_on():
+    folder = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "trader-broker")
+    if folder not in sys.path:
+        sys.path.insert(0, folder)
+    try:
+        import fyers_api
+    except ImportError:
+        return False
+    return fyers_api.fyers_only()
+
+
 # ---------------------------------------------------------------- charges
 
 def charges(buy_value, sell_value, prime=False):
@@ -274,6 +285,8 @@ def load_candles(sym, start, end, a, notes):
             write_json(path, {"symbol": sym.upper(), "from": min(min(span), start).isoformat(),
                               "to": max(max(span), end).isoformat(), "candles": have})
         return [c for c in have if start <= ist_of(c[0]).date() <= end], "fyers"
+    if fyers_only_on():
+        raise BacktestError("FYERS only is on and FYERS is not available: log in with FYERS first")
     try:
         c = fetch_yahoo(sym)
     except Exception as e:

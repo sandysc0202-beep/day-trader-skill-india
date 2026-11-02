@@ -228,8 +228,12 @@ def fyers_bridge():
 _fell_back = []
 
 
-def fyers_fallback(err):
-    """FYERS failed (down, logged out, a limit): say so once on stderr, and Yahoo answers instead."""
+def fyers_fallback(err, error_class=Exception):
+    """FYERS failed (down, logged out, a limit): say so once on stderr, and Yahoo answers
+    instead. With "fyers_only" on, there is no Yahoo backup: the failure is the answer."""
+    fy = sys.modules.get("fyers_api")
+    if fy is not None and fy.fyers_only():
+        raise error_class("FYERS only is on, so no Yahoo backup: %s" % err)
     if not _fell_back:
         sys.stderr.write("FYERS: %s; using Yahoo for this instead.\n" % err)
     _fell_back.append(str(err))
@@ -244,7 +248,7 @@ def yahoo_get(path):
         try:
             return fy.yahoo_compat(path)
         except fy.FyersError as e:
-            fyers_fallback(e)
+            fyers_fallback(e, ScanError)
     last = "no answer"
     for attempt in (0, 1):
         saw_429 = False
@@ -895,6 +899,10 @@ def pick_source(symbols, a):
     if not fy:
         return "yahoo"
     if len(symbols) > fy.scan_limit():
+        if fy.fyers_only():
+            raise ScanError("FYERS only is on, and FYERS' standard plan allows 50 data calls a minute: scan up to "
+                            "%d symbols (your favourites, --symbols or --watchlist), or switch the plan to Prime "
+                            "for the whole market" % fy.scan_limit())
         os.environ["TRADER_DATA_SOURCE"] = "yahoo"
         progress(a, "FYERS' standard plan allows 50 data calls a minute, so these %s symbols come from Yahoo "
                     "this run. Scan a watchlist of up to %d (--symbols or --watchlist) for FYERS data, or set "

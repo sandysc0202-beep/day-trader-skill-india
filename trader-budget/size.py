@@ -80,6 +80,7 @@ DEFAULTS = {
     "tick_size": None,
     "broker": "fyers",
     "fyers_plan": "standard",   # or "prime": how fast the pack may call FYERS (fyers_api.py)
+    "fyers_only": False,        # true: prices from FYERS or an error, never Yahoo's delayed ones
     "paper": True,
     "blocked": [],
     "allow_options": False,

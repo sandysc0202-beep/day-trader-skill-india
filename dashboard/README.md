@@ -83,6 +83,11 @@ plan in the dialog (it writes `"fyers_plan"` to `trader/config.json`):
 | sparklines | every 5 min | every minute |
 | Market scan | Yahoo (FYERS scans up to 40) | FYERS, the whole market |
 
+Tick **FYERS only** in the same dialog to turn the Yahoo backup off: a panel
+then shows a red **NO DATA** badge and the FYERS error instead of Yahoo's
+delayed prices (log in, or wait for FYERS). News headlines and results stay
+on Yahoo.
+
 Every panel shows a badge, **FYERS**, **YAHOO** or **REPLAY**, for where its
 data came from last. Hover it for the reason when FYERS failed and Yahoo
 stepped in (FYERS down, logged out, or the day's calls used up). Company

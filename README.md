@@ -179,6 +179,13 @@ scans the whole market on FYERS (one request a stock: about 5 minutes for
 blocks the API for the day. Yahoo stays for company results (FYERS has
 none), and as the automatic backup whenever FYERS is down, you are logged
 out, or the day's FYERS calls are used up: the tools say so and carry on.
+Set `"fyers_only": true` (or tick **FYERS only** in the dashboard's FYERS
+dialog) to turn that backup off: prices, charts, scans, the entry check, the
+Time Machine and backtests then use FYERS or stop with a clear error, never
+Yahoo's delayed prices. News headlines and results still come from Yahoo.
+If FYERS refuses Prime's bulk quote request (HTTP 403 on some accounts), the
+pack asks in normal batches of 50 instead and skips the bulk request for the
+rest of the day.
 
 ## The tools
 

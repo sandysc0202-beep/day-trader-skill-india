@@ -171,14 +171,27 @@ def load_token(path=TOKEN, now_utc=None):
     return tok
 
 
+def fyers_only():
+    """True when prices must come from FYERS or not at all: "fyers_only": true in
+    trader/config.json (or TRADER_FYERS_ONLY=1). Then a FYERS failure is an error, never
+    a quiet switch to Yahoo's delayed data. Yahoo stays for news headlines and results."""
+    v = os.environ.get("TRADER_FYERS_ONLY")
+    if v is not None:
+        return v.strip().lower() in ("1", "true", "yes", "on")
+    return bool((_read(APP_CONFIG) or {}).get("fyers_only"))
+
+
 def data_source(now_utc=None):
     """'fyers' when FYERS is the data source, else 'yahoo'.
 
     TRADER_DATA_SOURCE=yahoo or =fyers decides; otherwise FYERS is used when today's
-    token is saved (you logged in this morning), Yahoo when it is not."""
+    token is saved (you logged in this morning), or always with "fyers_only" (and a
+    missing login is then an error), Yahoo when neither."""
     want = (os.environ.get("TRADER_DATA_SOURCE") or "auto").lower()
     if want in ("yahoo", "fyers"):
         return want
+    if fyers_only():
+        return "fyers"
     return "fyers" if load_token(now_utc=now_utc) else "yahoo"
 
 
@@ -188,7 +201,8 @@ def auth_header(cfg=None, tok=None):
     if not cfg.get("app_id"):
         raise FyersError("no FYERS app id: run fyers_api.py setup --app-id ... (or set FYERS_APP_ID)")
     if not tok:
-        raise FyersError("no FYERS token for today (they expire at 6:30 AM IST): run fyers_api.py login")
+        raise FyersError("not logged in to FYERS today (tokens expire at 6:30 AM IST): log in with FYERS "
+                         "(dashboard button, or fyers_api.py login)")
     return "%s:%s" % (cfg["app_id"], tok["access_token"])
 
 
@@ -443,24 +457,60 @@ def cancel_order(order_id):
 
 # ---------------------------------------------------------------- data
 
+QUOTES_MODE = os.path.join("trader", "state", "fyers_quotes.json")
+_bulk_refused = []     # in this program: FYERS refused the bulk (POST) quotes request
+
+
+def bulk_quotes_ok():
+    """False once FYERS has refused the bulk quotes request today (remembered in
+    trader/state/fyers_quotes.json, so every tool skips it until tomorrow)."""
+    if _bulk_refused:
+        return False
+    doc = _read(QUOTES_MODE) or {}
+    return not (doc.get("bulk") is False and doc.get("day") == ist_now().date().isoformat())
+
+
+def _refuse_bulk(err):
+    _bulk_refused.append(str(err))
+    if os.path.isdir(os.path.dirname(QUOTES_MODE)):
+        _write(QUOTES_MODE, {"bulk": False, "day": ist_now().date().isoformat(), "why": str(err)})
+
+
+def _get_quotes(batch):
+    q = urllib.parse.quote(",".join(fyers_symbol(s) for s in batch), safe=":,-")
+    return request("GET", "%s/quotes?symbols=%s" % (DATA, q), auth=auth_header(), data_call=True)
+
+
 def quotes(symbols):
-    """{SYM: {price, prev_close, change, pct, open, high, low, volume, time}}, one request per
-    50 symbols on the standard plan (GET) or per 1,000 on Prime (POST)."""
+    """{SYM: {price, prev_close, change, pct, open, high, low, volume, time}}.
+
+    Prime asks for up to 1,000 symbols in one bulk (POST) request. If FYERS refuses that
+    (some accounts get HTTP 403 for it), the same symbols go as normal GET requests of 50,
+    and the bulk request is skipped for the rest of the day. The standard plan always uses
+    GET requests of 50."""
     out = {}
     syms = []
     for s in symbols:
         if s and s not in syms:
             syms.append(s)
-    p = plan()
-    size = p["quote_batch"]
-    for i in range(0, len(syms), size):
-        batch = syms[i:i + size]
-        if size > 50:
-            doc = request("POST", "%s/quotes" % DATA, {"symbols": [fyers_symbol(s) for s in batch]},
-                          auth=auth_header(), data_call=True)
-        else:
-            q = urllib.parse.quote(",".join(fyers_symbol(s) for s in batch), safe=":,-")
-            doc = request("GET", "%s/quotes?symbols=%s" % (DATA, q), auth=auth_header(), data_call=True)
+    docs = []
+    size = plan()["quote_batch"]
+    if size > 50 and bulk_quotes_ok():
+        for i in range(0, len(syms), size):
+            batch = syms[i:i + size]
+            try:
+                docs.append(request("POST", "%s/quotes" % DATA, {"symbols": [fyers_symbol(s) for s in batch]},
+                                    auth=auth_header(), data_call=True))
+            except FyersError as e:
+                if "token" in str(e) or "limit" in str(e):
+                    raise
+                _refuse_bulk(e)
+                docs = []
+                break
+    if not docs:
+        for i in range(0, len(syms), 50):
+            docs.append(_get_quotes(syms[i:i + 50]))
+    for doc in docs:
         for item in doc.get("d") or []:
             v = item.get("v") or {}
             if item.get("s") not in (None, "ok") or v.get("lp") is None:

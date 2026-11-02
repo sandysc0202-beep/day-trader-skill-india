@@ -216,6 +216,22 @@ class LiveFyers(unittest.TestCase):
         self.app.quotes(["RELIANCE", "INFY"])
         self.assertIn("POST", [m for m, u, _ in self.fake.calls if "/data/quotes" in u])
 
+    def test_fyers_only_shows_an_error_not_yahoo(self):
+        self.app.fyers_setup({"app_id": "ABCD1234-100", "fyers_only": True})
+        self.assertTrue(self.app.status()["fyers_only"])
+
+        def down(req, timeout=20):
+            raise srv.fyers.urllib.error.URLError("connection reset by peer")
+        for m in self.mods:
+            m._urlopen = down
+        q = self.app.quotes(["RELIANCE"])
+        self.assertNotIn("RELIANCE", q)
+        self.assertIn("connection reset by peer", q["_error"])
+        self.assertEqual(self.app.status()["panels"]["quotes"], "error")
+        with self.assertRaises(srv.scan_mod.ScanError):
+            self.app.chart("INFY")
+        self.assertEqual(self.yahoo, [])                                     # Yahoo never asked
+
     def test_fyers_down_means_yahoo(self):
         def down(req, timeout=20):
             raise srv.fyers.urllib.error.URLError("connection reset by peer")

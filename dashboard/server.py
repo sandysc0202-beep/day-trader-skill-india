@@ -279,6 +279,8 @@ class App:
                                                "flat_by", "min_reward_risk", "paper", "broker", "fyers_plan")},
             "favorites": self.favorites(), "workdir": self.workdir,
             "plan": fyers.plan_name(), "panels": dict(self.panels),
+            "fyers_only": (not self.demo) and fyers.fyers_only(),
+            "bulk_quotes": fyers.bulk_quotes_ok(),
             "every": self.every(),
         }
 
@@ -368,6 +370,11 @@ class App:
                               "spark": sp[-40:] or None, "src": "fyers"}
                 src = "fyers"
             except fyers.FyersError as e:
+                if fyers.fyers_only():
+                    self.panel("quotes", "error")
+                    self.note("quotes", "FYERS: %s (FYERS only is on: no Yahoo backup)" % e)
+                    out["_error"] = "FYERS: %s" % e
+                    return out
                 self.note("quotes", "FYERS: %s; Yahoo instead" % e)
         if src == "yahoo":
             for s, v in self.yahoo_quotes(syms).items():
@@ -726,12 +733,16 @@ class App:
         cfg.update({"app_id": app_id, "redirect_uri": str(body.get("redirect") or
                                                            "http://127.0.0.1:%d/fyers/callback" % self.port)})
         write_json(fyers.CONFIG, cfg)
-        if body.get("plan") in fyers.PLANS:
+        if body.get("plan") in fyers.PLANS or "fyers_only" in body:
             path = os.path.join("trader", "config.json")
             c = read_json(path, {}) or {}
-            c["fyers_plan"] = body["plan"]
+            if body.get("plan") in fyers.PLANS:
+                c["fyers_plan"] = body["plan"]
+            if "fyers_only" in body:
+                c["fyers_only"] = bool(body["fyers_only"])
             write_json(path, c)
             self.cache.clear()
+            self.panels.clear()
         secret = str(body.get("secret") or "").strip()
         if secret:
             with open(fyers.SECRET_FILE, "w", encoding="utf-8") as fh:

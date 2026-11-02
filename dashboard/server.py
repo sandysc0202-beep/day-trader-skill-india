@@ -177,6 +177,7 @@ class App:
         os.chdir(self.workdir)                 # the tools and fyers_api read trader/... from here
         self.clock = Clock(demo)
         self.cache = {}
+        self.panels = {}                       # which source each panel's data came from last
         self.lock = threading.Lock()
         self._wall = None
         self._first_run()
@@ -274,8 +275,10 @@ class App:
                       "end": DEMO_END.strftime("%H:%M")} if self.demo else None,
             "config": {k: cfg.get(k) for k in ("budget", "max_loss_per_trade_inr", "max_daily_loss_inr",
                                                "max_trades_per_day", "no_entries_before", "no_entries_after",
-                                               "flat_by", "min_reward_risk", "paper", "broker")},
+                                               "flat_by", "min_reward_risk", "paper", "broker", "fyers_plan")},
             "favorites": self.favorites(), "workdir": self.workdir,
+            "plan": fyers.plan_name(), "panels": dict(self.panels),
+            "every": self.every(),
         }
 
     # ------------------------------------------------ market data
@@ -291,15 +294,16 @@ class App:
         else:
             key = ("chart", sym, rng, interval)
             hit = self.cache.get(key)
-            if hit and time.time() - hit[0] < (20 if interval == "5m" else 300):
+            if hit and time.time() - hit[0] < (self.every()["chart"] if interval == "5m" else 300):
                 res = hit[1]
             else:
-                text = scan_mod.yahoo_get(scan_mod.chart_path(sym, rng, interval))
+                text = scan_mod.yahoo_get(scan_mod.chart_path(sym, rng, interval))   # FYERS first, Yahoo backup
                 doc = json.loads(text)
                 if not (doc.get("chart") or {}).get("result"):
                     raise ToolError("no chart for %s" % sym)
                 res = doc["chart"]["result"][0]
                 self.cache[key] = (time.time(), res)
+            self.panel("chart", "fyers" if (res.get("meta") or {}).get("source") == "fyers" else "yahoo")
             cut = None
         s = scan_mod.series_from_result(res)
         bars = []
@@ -325,7 +329,7 @@ class App:
         price = bars[-1]["c"] if bars else meta.get("regularMarketPrice")
         return {"symbol": sym, "bars": bars, "prev_close": prev, "price": price,
                 "pct": round(100.0 * (price / prev - 1), 2) if price and prev else None,
-                "source": self.source(), "interval": interval}
+                "source": "demo" if self.demo else self.panels.get("chart", self.source()), "interval": interval}
 
     def quotes(self, symbols):
         syms = []
@@ -348,27 +352,81 @@ class App:
             return out
         key = ("quotes", tuple(syms))
         hit = self.cache.get(key)
-        if hit and time.time() - hit[0] < (3 if self.source() == "fyers" else 10):
+        if hit and time.time() - hit[0] < self.every()["quotes"]:
             return hit[1]
+        src = "yahoo"
         if self.source() == "fyers":
             try:
-                q = fyers.quotes(syms)
+                q = fyers.quotes(syms)                # one request per 50 (standard) or 1,000 (Prime) symbols
+                sparks = self.sparks(syms)
                 for s, v in q.items():
-                    out[s] = {"price": v["price"], "prev_close": v["prev_close"], "pct": v["pct"], "spark": None}
+                    sp = list(sparks.get(s) or [])
+                    if sp and v.get("price") is not None:
+                        sp[-1] = v["price"]
+                    out[s] = {"price": v["price"], "prev_close": v["prev_close"], "pct": v["pct"],
+                              "spark": sp[-40:] or None, "src": "fyers"}
+                src = "fyers"
             except fyers.FyersError as e:
-                out["_error"] = str(e)
-        else:
-            data, failed = scan_mod.fetch_spark(syms, "1d", "5m", 0.2)
-            for s, ser in data.items():
-                closes = [c for c in ser["c"] if c is not None]
-                meta = ser["meta"]
-                prev = meta.get("chartPreviousClose") or meta.get("previousClose")
-                price = meta.get("regularMarketPrice") or (closes[-1] if closes else None)
-                out[s] = {"price": price, "prev_close": prev,
-                          "pct": round(100.0 * (price / prev - 1), 2) if price and prev else None,
-                          "spark": closes[-40:]}
+                self.note("quotes", "FYERS: %s; Yahoo instead" % e)
+        if src == "yahoo":
+            for s, v in self.yahoo_quotes(syms).items():
+                out[s] = dict(v, src="yahoo")
+        self.panel("quotes", src)
         self.cache[key] = (time.time(), out)
         return out
+
+    def yahoo_quotes(self, syms):
+        """Yahoo's delayed quotes and sparklines, batches of 20 (the backup for FYERS)."""
+        env = os.environ.get("TRADER_DATA_SOURCE")
+        os.environ["TRADER_DATA_SOURCE"] = "yahoo"
+        try:
+            data, failed = scan_mod.fetch_spark(syms, "1d", "5m", 0.2)
+        finally:
+            if env is None:
+                os.environ.pop("TRADER_DATA_SOURCE", None)
+            else:
+                os.environ["TRADER_DATA_SOURCE"] = env
+        out = {}
+        for s, ser in data.items():
+            closes = [c for c in ser["c"] if c is not None]
+            meta = ser["meta"]
+            prev = meta.get("chartPreviousClose") or meta.get("previousClose")
+            price = meta.get("regularMarketPrice") or (closes[-1] if closes else None)
+            out[s] = {"price": price, "prev_close": prev,
+                      "pct": round(100.0 * (price / prev - 1), 2) if price and prev else None,
+                      "spark": closes[-40:]}
+        return out
+
+    def sparks(self, syms):
+        """Today's 5-minute closes for the sparklines, from FYERS, refreshed every minute on Prime
+        and every five on the standard plan (one history request per symbol)."""
+        hit = self.cache.get(("sparks", tuple(syms)))
+        if hit and time.time() - hit[0] < self.every()["sparks"]:
+            return hit[1]
+        out = {}
+        try:
+            data, failed = scan_mod.fetch_spark(syms[:fyers.scan_limit()], "1d", "5m", 0)
+            out = {s: [c for c in ser["c"] if c is not None] for s, ser in data.items()}
+        except Exception:
+            out = (hit or (0, {}))[1]
+        self.cache[("sparks", tuple(syms))] = (time.time(), out)
+        return out
+
+    def every(self):
+        """Refresh intervals (seconds), by data source and FYERS plan."""
+        if self.demo:
+            return {"stream": 1.0, "quotes": 0, "chart": 1.5, "sparks": 0}
+        if self.source() != "fyers":
+            return {"stream": 10.0, "quotes": 10, "chart": 20, "sparks": 10}
+        if fyers.plan_name() == "prime":
+            return {"stream": 1.5, "quotes": 1, "chart": 5, "sparks": 60}
+        return {"stream": 3.0, "quotes": 3, "chart": 20, "sparks": 300}
+
+    def panel(self, name, src):
+        self.panels[name] = src
+
+    def note(self, name, text):
+        self.panels[name + "_note"] = text
 
     # ------------------------------------------------ the pipeline
 
@@ -390,11 +448,19 @@ class App:
                     u = self.run("scan", ["universe"], want_json=False, timeout=300)
                     if u["code"] != 0:
                         raise ToolError("could not download NSE's equity list: " + (u["error"] or u["text"])[-300:])
-                env = {"TRADER_DATA_SOURCE": "yahoo"}     # the whole market: Yahoo's batches, not FYERS' 50 a minute
-            r = self.run("scan", args, timeout=900, env=env)
+            r = self.run("scan", args, timeout=1800, env=env)  # the scanner picks FYERS or Yahoo by your plan
         if r["data"] is None:
             raise ToolError((r["error"] or r["text"] or "the scan failed")[-500:])
+        self.panel("scan", "demo" if self.demo else self.tool_source(r, r["data"].get("source")))
         return r["data"]
+
+    def tool_source(self, r, said=None):
+        """Where a tool's data came from: what it said, else today's source, Yahoo if it fell back."""
+        if "FYERS:" in (r.get("error") or ""):
+            line = [l for l in r["error"].splitlines() if l.startswith("FYERS:")][-1]
+            self.note("last", line)
+            return "yahoo"
+        return said or self.source()
 
     def entry(self, sym):
         args = ["check", sym, "--json", "--write"] + self.now_args()
@@ -403,6 +469,7 @@ class App:
         r = self.run("entry", args)
         if r["data"] is None:
             raise ToolError((r["error"] or r["text"])[-500:])
+        self.panel("entry", "demo" if self.demo else self.tool_source(r))
         return r["data"]
 
     def plan(self, body):
@@ -433,6 +500,7 @@ class App:
         r = self.run("tm", args, timeout=300)
         if r["data"] is None:
             raise ToolError((r["error"] or r["text"])[-500:])
+        self.panel("timemachine", "demo" if self.demo else self.tool_source(r))
         return r["data"]
 
     def size(self, body):
@@ -515,6 +583,7 @@ class App:
             if symbols:
                 args += ["--tickers"] + symbols
         r = self.run("news", args + ["--all", "--dry-run", "--json"], timeout=240)
+        self.panel("news", "demo" if self.demo else ("yahoo" if "FYERS:" in (r["error"] or "") else self.source()))
         data = r["data"] or {"items": [], "moves": [], "notes": [r["error"][-300:]] if r["error"] else []}
         self.cache[key] = (time.time(), data)
         return data
@@ -635,6 +704,12 @@ class App:
         cfg.update({"app_id": app_id, "redirect_uri": str(body.get("redirect") or
                                                            "http://127.0.0.1:%d/fyers/callback" % self.port)})
         write_json(fyers.CONFIG, cfg)
+        if body.get("plan") in fyers.PLANS:
+            path = os.path.join("trader", "config.json")
+            c = read_json(path, {}) or {}
+            c["fyers_plan"] = body["plan"]
+            write_json(path, c)
+            self.cache.clear()
         secret = str(body.get("secret") or "").strip()
         if secret:
             with open(fyers.SECRET_FILE, "w", encoding="utf-8") as fh:
@@ -831,9 +906,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Connection", "keep-alive")
         self.end_headers()
         app = self.app
-        every = 1.0 if app.demo else (3.0 if app.source() == "fyers" else 10.0)
         try:
             while True:
+                every = app.every()["stream"]
                 snap = app.snapshot()
                 self.wfile.write(("data: %s\n\n" % json.dumps(snap, default=str)).encode("utf-8"))
                 self.wfile.flush()

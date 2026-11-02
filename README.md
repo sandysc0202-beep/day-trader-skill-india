@@ -166,8 +166,18 @@ YOUR-APP-ID --redirect <that URL>` and put the secret in `FYERS_SECRET` or
 `trader/fyers.secret` yourself, never in a chat. **Each trading morning:**
 `fyers_api.py login` (or the dashboard's button); FYERS expires tokens at 6:30
 AM. Live API orders also need a static IP registered with FYERS (SEBI, from 1
-April 2026). FYERS' free data plan allows 50 calls a minute, so a FYERS scan
-takes a watchlist of up to 40 stocks; the whole-market scan uses Yahoo.
+April 2026).
+
+**FYERS Prime or Standard.** Set `"fyers_plan"` in `trader/config.json` (or
+the plan switch in the dashboard's FYERS dialog). `"standard"` (free) paces
+the pack at 4 calls a second, 45 a minute and 4,800 a day, and a FYERS scan
+takes up to 40 stocks (bigger scans go to Yahoo). `"prime"` paces at 9 a
+second, 450 a minute and 4,90,000 a day, quotes 1,000 stocks a request, and
+scans the whole market on FYERS (one request a stock: about 5 minutes for
+2,000). Each limit sits just under FYERS' own, because the third minute over
+blocks the API for the day. Yahoo stays for company results (FYERS has
+none), and as the automatic backup whenever FYERS is down, you are logged
+out, or the day's FYERS calls are used up: the tools say so and carry on.
 
 ## The tools
 

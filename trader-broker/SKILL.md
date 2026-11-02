@@ -126,10 +126,16 @@ as **the entry only**:
 
 With today's token saved, the scanner, entry timer, exit planner, time
 machine, alerts and news read FYERS' bars (official, free) instead of
-Yahoo's. FYERS' free plan allows 50 data calls a minute, so a FYERS scan
-covers a watchlist of up to 40 stocks; scan the whole market with Yahoo
-(`TRADER_DATA_SOURCE=yahoo`). `TRADER_DATA_SOURCE=fyers` or `=yahoo` forces
-either.
+Yahoo's. How fast the pack calls FYERS follows `"fyers_plan"` in
+`trader/config.json`: `"standard"` (free: 4 a second, 45 a minute, 4,800 a
+day, scans of up to 40 stocks on FYERS, bigger ones on Yahoo) or `"prime"`
+(9 a second, 450 a minute, 4,90,000 a day, quotes 1,000 at a time, the whole
+market on FYERS). Just under FYERS' own limits, counted across every tool in
+`trader/state/fyers_calls.json`: the third minute over the limit blocks the
+API for the day. When FYERS fails (down, logged out, the day's calls used
+up), each tool says so on one line and uses Yahoo instead.
+`TRADER_DATA_SOURCE=fyers` or `=yahoo` forces either; `FYERS_PLAN` overrides
+the config.
 
 **The FYERS MCP server** (optional, `claude_desktop_config.example.json`):
 FYERS' own MCP at `https://mcp.fyers.in/mcp` lets Claude read positions,

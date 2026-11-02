@@ -66,10 +66,20 @@ fill.
 3. **LOG IN WITH FYERS** each trading morning: FYERS' own page, your password
    and TOTP there. FYERS expires tokens at 6:30 AM IST.
 
-With today's token the chart, quotes and the favourites scan come from FYERS
-(official, free; 50 data calls a minute, so the dashboard refreshes quotes
-every 3 seconds in one call and charts every 20). Without it, Yahoo's
-delayed data. Live API orders also need a static IP registered with FYERS
+With today's token every price on the screen comes from FYERS. Pick your
+plan in the dialog (it writes `"fyers_plan"` to `trader/config.json`):
+
+| | Standard (free) | Prime |
+| --- | --- | --- |
+| quotes refresh | every 3 s, 50 a request | every second, 1,000 a request |
+| chart refresh | 20 s | 5 s |
+| sparklines | every 5 min | every minute |
+| Market scan | Yahoo (FYERS scans up to 40) | FYERS, the whole market |
+
+Every panel shows a badge, **FYERS**, **YAHOO** or **REPLAY**, for where its
+data came from last. Hover it for the reason when FYERS failed and Yahoo
+stepped in (FYERS down, logged out, or the day's calls used up). Company
+results are always Yahoo's: FYERS has no fundamentals. Live API orders also need a static IP registered with FYERS
 (SEBI's rule from 1 April 2026).
 
 ## The demo

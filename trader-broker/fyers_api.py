@@ -29,9 +29,11 @@ access token is saved in trader/state/fyers_token.json; FYERS expires every
 token at 6:30 AM IST, so you log in once a trading day.
 
 Endpoints are FYERS API v3 (https://fyers.in/api-docs/). The free plan
-allows 5 data calls a second and 50 a minute, and FYERS blocks the API for
-the rest of the day after the third minute over; this module paces itself
-under that (4 a second, 45 a minute), counted across every tool that runs.
+allows 5 data calls a second, 50 a minute and 5,000 a day; Prime allows 10,
+500 and 5,00,000. FYERS blocks the API for the rest of the day after the
+third minute over, so this module paces itself a little under your plan
+("fyers_plan" in trader/config.json: "standard" or "prime"), counted across
+every tool that runs.
 
 SEBI's rules (from 1 April 2026) accept API orders only from a static IP
 you registered with FYERS. Data calls do not need it.
@@ -196,23 +198,52 @@ _urlopen = urllib.request.urlopen     # tests swap this
 
 
 PACE_FILE = os.path.join("trader", "state", "fyers_calls.json")
-PER_MINUTE, PER_SECOND = 45, 4                # FYERS' free plan allows 50 and 5
+APP_CONFIG = os.path.join("trader", "config.json")
+
+# FYERS' data-API limits (fyers.in/api-docs/v3/getting-started/plans-and-limits, checked 2026-11-02):
+#   Standard (free): 5 a second, 50 a minute, 5,000 a day, 50 symbols a quote request
+#   Prime:          10 a second, 500 a minute, 5,00,000 a day, 1,000 symbols a quote request
+# Over the per-minute limit three times in a day blocks the API until the next day, so the
+# pack stays a little under each one.
+PLANS = {
+    "standard": {"per_second": 4, "per_minute": 45, "per_day": 4800, "quote_batch": 50, "scan_limit": 40},
+    "prime": {"per_second": 9, "per_minute": 450, "per_day": 490000, "quote_batch": 1000, "scan_limit": 100000},
+}
 
 
-def _wait(calls, now):
+def plan_name():
+    """"standard" or "prime": FYERS_PLAN, else "fyers_plan" in trader/config.json, else standard."""
+    name = (os.environ.get("FYERS_PLAN") or (_read(APP_CONFIG) or {}).get("fyers_plan") or "standard")
+    name = str(name).strip().lower()
+    return name if name in PLANS else "standard"
+
+
+def plan():
+    return PLANS[plan_name()]
+
+
+def scan_limit():
+    """How many symbols one FYERS scan may cover (one history call each)."""
+    return plan()["scan_limit"]
+
+
+def _wait(calls, now, per_minute=None, per_second=None):
     """Seconds to wait before one more call, given the wall-clock times of recent calls."""
+    p = plan()
+    per_minute = per_minute or p["per_minute"]
+    per_second = per_second or p["per_second"]
     calls = [t for t in calls if now - t < 60]
     wait = 0.0
-    if len(calls) >= PER_MINUTE:
-        wait = max(wait, 60 - (now - calls[-PER_MINUTE]) + 0.05)
+    if len(calls) >= per_minute:
+        wait = max(wait, 60 - (now - calls[-per_minute]) + 0.05)
     recent = [t for t in calls if now - t < 1]
-    if len(recent) >= PER_SECOND:
-        wait = max(wait, 1 - (now - recent[-PER_SECOND]) + 0.05)
+    if len(recent) >= per_second:
+        wait = max(wait, 1 - (now - recent[-per_second]) + 0.05)
     return wait, calls
 
 
 def _pace():
-    """Stay under the free plan: 4 calls a second, 45 a minute, counted across every tool.
+    """Stay under your FYERS plan's limits (a second, a minute, a day), counted across every tool.
 
     The dashboard runs the scanner, the entry timer and the time machine as separate
     programs, and FYERS blocks the API for the day after the third minute over the
@@ -232,9 +263,15 @@ def _pace():
     with open(PACE_FILE + ".lock", "a+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
-            calls = _read(PACE_FILE) or []
-            if not isinstance(calls, list):
-                calls = []
+            doc = _read(PACE_FILE) or {}
+            if isinstance(doc, list):                       # the older shape: just the times
+                doc = {"calls": doc}
+            calls = doc.get("calls") if isinstance(doc.get("calls"), list) else []
+            day = ist_now().date().isoformat()
+            count = int(doc.get("count") or 0) if doc.get("day") == day else 0
+            if count >= plan()["per_day"]:
+                raise FyersError("FYERS' daily data limit for your %s plan is used up (%s calls today): "
+                                 "Yahoo until tomorrow" % (plan_name(), "{:,}".format(count)))
             wait, calls = _wait(calls, time.time())
             if wait > 0:
                 SLEEP(wait)
@@ -242,7 +279,7 @@ def _pace():
             _calls[:] = calls
             tmp = PACE_FILE + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump(calls, fh)
+                json.dump({"day": day, "count": count + 1, "plan": plan_name(), "calls": calls}, fh)
             os.replace(tmp, PACE_FILE)
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
@@ -407,13 +444,23 @@ def cancel_order(order_id):
 # ---------------------------------------------------------------- data
 
 def quotes(symbols):
-    """{SYM: {price, prev_close, change, pct, open, high, low, volume, time}} in batches of 50."""
+    """{SYM: {price, prev_close, change, pct, open, high, low, volume, time}}, one request per
+    50 symbols on the standard plan (GET) or per 1,000 on Prime (POST)."""
     out = {}
-    syms = [s for s in symbols if s]
-    for i in range(0, len(syms), 50):
-        batch = syms[i:i + 50]
-        q = urllib.parse.quote(",".join(fyers_symbol(s) for s in batch), safe=":,-")
-        doc = request("GET", "%s/quotes?symbols=%s" % (DATA, q), auth=auth_header(), data_call=True)
+    syms = []
+    for s in symbols:
+        if s and s not in syms:
+            syms.append(s)
+    p = plan()
+    size = p["quote_batch"]
+    for i in range(0, len(syms), size):
+        batch = syms[i:i + size]
+        if size > 50:
+            doc = request("POST", "%s/quotes" % DATA, {"symbols": [fyers_symbol(s) for s in batch]},
+                          auth=auth_header(), data_call=True)
+        else:
+            q = urllib.parse.quote(",".join(fyers_symbol(s) for s in batch), safe=":,-")
+            doc = request("GET", "%s/quotes?symbols=%s" % (DATA, q), auth=auth_header(), data_call=True)
         for item in doc.get("d") or []:
             v = item.get("v") or {}
             if item.get("s") not in (None, "ok") or v.get("lp") is None:
@@ -466,8 +513,9 @@ def window(rng, interval, today):
     return today - datetime.timedelta(days=days), today, None
 
 
-def chart_doc(sym, rng, interval, now_utc=None, period=None):
-    """One symbol as Yahoo's v8 chart answer: {"chart": {"result": [{meta, timestamp, indicators}]}}."""
+def chart_doc(sym, rng, interval, now_utc=None, period=None, quote=None):
+    """One symbol as Yahoo's v8 chart answer: {"chart": {"result": [{meta, timestamp, indicators}]}}.
+    `quote` saves the quote call when the caller already has it (a scan fetches them in bulk)."""
     res = RESOLUTION.get(interval)
     if not res:
         raise FyersError("interval %r is not one FYERS has" % interval)
@@ -483,7 +531,7 @@ def chart_doc(sym, rng, interval, now_utc=None, period=None):
         days = sorted({(_utc(c[0]) + IST).date() for c in candles})[-keep:]
         first = days[0] if days else today
         candles = [c for c in candles if (_utc(c[0]) + IST).date() >= first]
-    q = quotes([sym]).get(plain_symbol(fyers_symbol(sym)), {})
+    q = quote if quote is not None else quotes([sym]).get(plain_symbol(fyers_symbol(sym)), {})
     last = candles[-1] if candles else None
     meta = {"currency": "INR", "symbol": plain_symbol(fyers_symbol(sym)) + ".NS", "exchangeName": "NSI",
             "instrumentType": "EQUITY", "dataGranularity": interval, "range": rng or "",
@@ -501,19 +549,28 @@ def chart_doc(sym, rng, interval, now_utc=None, period=None):
                                   "volume": [c[5] for c in candles]}]}}], "error": None}}
 
 
-SPARK_LIMIT = 40   # one history call per symbol: more than this would hit the 50-a-minute limit
+SPARK_LIMIT = PLANS["standard"]["scan_limit"]   # the standard plan's; scan_limit() gives your plan's
 
 
 def spark_doc(symbols, rng, interval, now_utc=None):
-    """Several symbols as Yahoo's v7 spark answer."""
-    if len(symbols) > SPARK_LIMIT:
-        raise FyersError("FYERS' free plan allows 50 data calls a minute: scan up to %d symbols with FYERS "
-                         "(a watchlist), or the whole market with Yahoo (TRADER_DATA_SOURCE=yahoo)" % SPARK_LIMIT)
+    """Several symbols as Yahoo's v7 spark answer: one bulk quote request, then one history
+    request per symbol. A symbol FYERS has no data for is simply left out, as Yahoo does."""
+    if len(symbols) > scan_limit():
+        raise FyersError("FYERS' %s plan allows %d data calls a minute: scan up to %d symbols with FYERS "
+                         "(a watchlist), or the whole market with Yahoo (TRADER_DATA_SOURCE=yahoo)"
+                         % (plan_name(), plan()["per_minute"] + 5, scan_limit()))
+    qs = quotes(symbols)
     out = []
     for s in symbols:
-        doc = chart_doc(s, rng, interval, now_utc)
+        try:
+            doc = chart_doc(s, rng, interval, now_utc, quote=qs.get(plain_symbol(fyers_symbol(s)), {}))
+        except FyersError as e:
+            if "limit" in str(e) or "token" in str(e):
+                raise
+            continue
         r = doc["chart"]["result"][0]
-        out.append({"symbol": r["meta"]["symbol"], "response": [r]})
+        if r["timestamp"]:
+            out.append({"symbol": r["meta"]["symbol"], "response": [r]})
     return {"spark": {"result": out, "error": None}}
 
 
@@ -577,8 +634,10 @@ def main(argv=None):
             print("Saved today's FYERS token (valid until 6:30 AM IST tomorrow, day %s)." % tok["day"])
         elif a.cmd == "status":
             tok = load_token()
-            print("FYERS token for today: %s. Data source: %s." % ("yes" if tok else "no (run login)",
-                                                                   data_source()))
+            p = plan()
+            print("FYERS token for today: %s. Data source: %s. Plan: %s (paced at %d a second, %d a minute, "
+                  "%s a day)." % ("yes" if tok else "no (run login)", data_source(), plan_name(),
+                                  p["per_second"], p["per_minute"], "{:,}".format(p["per_day"])))
             return 0 if tok else 1
         elif a.cmd == "quote":
             _print(quotes(a.symbols))

@@ -118,6 +118,10 @@ input::placeholder { color: var(--dim); }
 .chip.live { border-color: var(--down); background: rgba(255, 61, 113, .14); color: #ffd3de; }
 .chip.paper { border-color: var(--cyan); }
 .chip.demo { border-color: var(--violet); background: rgba(139, 92, 255, .16); }
+.src { font-family: var(--mono); font-size: 9px; letter-spacing: .1em; padding: 2px 6px; border-radius: 5px; border: 1px solid var(--line); color: var(--muted); text-transform: uppercase; white-space: nowrap; }
+.src.fyers { color: var(--up); border-color: rgba(43,255,154,.45); background: rgba(43,255,154,.08); }
+.src.yahoo { color: var(--amber); border-color: rgba(255,176,32,.45); background: rgba(255,176,32,.08); }
+.src.demo { color: #cbb8ff; border-color: rgba(139,92,255,.5); background: rgba(139,92,255,.12); }
 .tag { font-family: var(--mono); font-size: 9.5px; padding: 2px 6px; border-radius: 5px; background: rgba(139, 92, 255, .18); color: #cbb8ff; letter-spacing: .05em; text-transform: uppercase; }
 .pulse { animation: pulse 1.6s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .35; } }
@@ -270,7 +274,7 @@ footer { position: relative; z-index: 2; text-align: center; color: var(--dim); 
   <!-- ================================================================ left -->
   <aside class="left">
     <section class="panel">
-      <div class="ph"><h2><span class="idx">01</span>Scanner</h2>
+      <div class="ph"><h2><span class="idx">01</span>Scanner <span class="src" data-src="scan"></span></h2>
         <div class="row">
           <select id="scanScope" title="what to scan" aria-label="Scan scope" style="padding:5px 6px">
             <option value="market">Market</option>
@@ -285,7 +289,7 @@ footer { position: relative; z-index: 2; text-align: center; color: var(--dim); 
       </div>
     </section>
     <section class="panel">
-      <div class="ph"><h2><span class="idx">02</span>Favourites</h2></div>
+      <div class="ph"><h2><span class="idx">02</span>Favourites <span class="src" data-src="quotes"></span></h2></div>
       <div class="pb">
         <form class="row" id="favForm" style="margin-bottom:8px">
           <input id="favInput" placeholder="ADD SYMBOL e.g. RELIANCE" aria-label="Add symbol" style="flex:1">
@@ -295,7 +299,7 @@ footer { position: relative; z-index: 2; text-align: center; color: var(--dim); 
       </div>
     </section>
     <section class="panel">
-      <div class="ph"><h2><span class="idx">07</span>News &amp; NSE filings</h2><button class="sm ghost" id="btnNews" aria-label="Refresh news">↻</button></div>
+      <div class="ph"><h2><span class="idx">07</span>News &amp; NSE filings <span class="src" data-src="news"></span></h2><button class="sm ghost" id="btnNews" aria-label="Refresh news">↻</button></div>
       <div class="pb news scrolly" id="newsBox" style="max-height:420px"><div class="empty">Loading…</div></div>
     </section>
   </aside>
@@ -336,12 +340,12 @@ footer { position: relative; z-index: 2; text-align: center; color: var(--dim); 
   <!-- ================================================================ right -->
   <aside class="right">
     <section class="panel">
-      <div class="ph"><h2><span class="idx">03</span>Entry &amp; Plan</h2>
+      <div class="ph"><h2><span class="idx">03</span>Entry &amp; Plan <span class="src" data-src="entry"></span></h2>
         <div class="row"><button class="sm" id="btnEntry">CHECK</button><button class="sm" id="btnPlan">PLAN</button></div></div>
       <div class="pb" id="planBox"><div class="empty">Pick a symbol, then CHECK: the entry timer watches for a 5-minute close above the opening range.</div></div>
     </section>
     <section class="panel">
-      <div class="ph"><h2><span class="idx">04</span>Time Machine</h2><button class="sm" id="btnTM">REPLAY</button></div>
+      <div class="ph"><h2><span class="idx">04</span>Time Machine <span class="src" data-src="timemachine"></span></h2><button class="sm" id="btnTM">REPLAY</button></div>
       <div class="pb" id="tmBox"><div class="empty">10,000 replays of the rest of the session from the stock's own bars, plus every past day the setup fired.</div></div>
     </section>
     <section class="panel">
@@ -570,7 +574,8 @@ function renderTop() {
   mode.innerHTML = `<span class="dot" ${st.demo ? 'style="background:var(--violet)"' : ""}></span>` + (st.demo ? "DEMO · PAPER" : st.paper ? "PAPER" : "LIVE · REAL MONEY");
   const data = $("chipData");
   data.className = "chip " + (st.source === "fyers" ? "ok" : st.source === "demo" ? "" : "warn");
-  data.innerHTML = '<span class="dot"></span>' + (st.source === "fyers" ? "FYERS LIVE" : st.source === "demo" ? "REPLAY DATA" : "YAHOO · DELAYED");
+  data.innerHTML = '<span class="dot"></span>' + (st.source === "fyers" ? "FYERS LIVE" + (st.plan === "prime" ? " · PRIME" : "") : st.source === "demo" ? "REPLAY DATA" : "YAHOO · DELAYED");
+  renderSources(st);
   const fb = $("btnFyers");
   fb.textContent = st.demo ? "FYERS · DEMO" : st.fyers.logged_in ? "FYERS ✓" : st.fyers.configured ? "FYERS LOGIN" : "CONNECT FYERS";
   fb.className = "sm " + (st.fyers.logged_in ? "" : st.demo ? "ghost" : "hot");
@@ -580,6 +585,21 @@ function renderTop() {
     if (!S.scrubbing) { $("scrub").value = m; $("scrubLbl").textContent = t.slice(0, 5); }
     $("speed").value = String(st.clock.speed);
   }
+}
+const SRC_TEXT = { fyers: "FYERS", yahoo: "YAHOO", demo: "REPLAY" };
+const SRC_TITLE = {
+  scan: "Where the last scan's bars came from", quotes: "Prices and sparklines",
+  entry: "The entry check's bars", timemachine: "The 60 days of bars behind the replays",
+  news: "Price moves (headlines are Yahoo's RSS, filings are NSE's own feeds)" };
+function renderSources(st) {
+  const p = st.panels || {}, now = st.source;
+  document.querySelectorAll("[data-src]").forEach((el) => {
+    const k = el.dataset.src, v = st.demo ? "demo" : (p[k] || now);
+    el.className = "src " + v;
+    el.textContent = SRC_TEXT[v] || v;
+    el.title = (SRC_TITLE[k] || "") + ": " + (SRC_TEXT[v] || v) + (v === "yahoo" && now === "fyers" ? " (FYERS failed, Yahoo was the backup)" : "")
+      + (p[k + "_note"] ? "\n" + p[k + "_note"] : "");
+  });
 }
 const minutes = (s) => { const [h, mm] = String(s).split(":").map(Number); return h * 60 + mm; };
 function renderTrack(m, c) {
@@ -650,6 +670,7 @@ function renderChart() {
   $("symPx").textContent = fmt(px); $("symPx").className = "p " + cls(pc);
   $("symChg").innerHTML = c.prev_close ? `<span class="${cls(pc)}">${pct(pc)}</span> <span class="muted">prev ${fmt(c.prev_close)}</span>` : "";
   $("symSrc").textContent = c.source === "fyers" ? "FYERS" : c.source === "demo" ? "REPLAY" : "YAHOO DELAYED";
+  $("symSrc").className = "src " + (c.source || "yahoo");
   const st = S.state, entry = st.entry, plan = st.plan, tm = st.timemachine;
   const lines = [], legend = [];
   let or = null;
@@ -921,11 +942,14 @@ function fyersModal() {
       <span class="chip ${f.logged_in ? "ok" : "warn"}"><span class="dot"></span>${f.logged_in ? "LOGGED IN TODAY" : "NOT LOGGED IN"}</span></div>
     <div class="note" style="margin-bottom:10px">1. Create an individual API app at <a href="https://myapi.fyers.in" target="_blank" rel="noopener">myapi.fyers.in</a> with this redirect URL:<br><span class="mono" style="color:var(--text)">${esc(f.redirect)}</span></div>
     <div class="field"><label for="fApp">App ID</label><input id="fApp" value="${esc(f.app_id)}" placeholder="ABCD1234-100"></div>
+    <div class="field"><label for="fPlan">FYERS data plan</label><select id="fPlan">
+      <option value="standard" ${S.status.plan !== "prime" ? "selected" : ""}>Standard (free) · 50 calls/min · scans 40 stocks</option>
+      <option value="prime" ${S.status.plan === "prime" ? "selected" : ""}>Prime · 500 calls/min · whole-market scans</option></select></div>
     <div class="field"><label for="fSec">App secret (saved only on this computer, in trader/fyers.secret)</label><input id="fSec" type="password" placeholder="${f.secret ? "saved: leave blank to keep it" : "paste it here, never in a chat"}" autocomplete="off"></div>
     <div class="row"><button class="primary" id="fSave">SAVE</button>${f.configured ? '<a class="btn hot" href="/fyers/login" style="text-decoration:none">2. LOG IN WITH FYERS ↗</a>' : ""}</div>
     <div class="note" style="margin-top:12px">Log in each trading morning: FYERS expires tokens at 6:30 AM IST. Your password and TOTP go into FYERS' own page only. With today's token, charts and quotes come from FYERS. Live orders also need a static IP registered with FYERS (SEBI, from April 2026).</div>`);
   $("fSave").onclick = () => busy("fsave", $("fSave"), async () => {
-    await api("/api/fyers/setup", { app_id: $("fApp").value, secret: $("fSec").value, redirect: f.redirect });
+    await api("/api/fyers/setup", { app_id: $("fApp").value, secret: $("fSec").value, redirect: f.redirect, plan: $("fPlan").value });
     S.status = await api("/api/status"); toast("Saved. Now log in with FYERS.", "good"); fyersModal();
   });
 }
@@ -936,7 +960,7 @@ async function resultsModal() {
     const r = await api("/api/analyst?symbol=" + encodeURIComponent(sym));
     const rows = (r.result && r.result.rows) || [];
     const cr = (v) => v == null ? "—" : fmt(v / 1e7, 0);
-    let html = `<div class="note" style="margin-bottom:8px">${esc((r.result && r.result.entity) || r.ticker)} · ₹ crore except EPS · Yahoo fundamentals (unofficial)${S.status.demo ? " · demo company" : ""}</div>`;
+    let html = `<div class="note" style="margin-bottom:8px">${esc((r.result && r.result.entity) || r.ticker)} · ₹ crore except EPS · <span class="src yahoo">YAHOO</span> fundamentals (FYERS has none)${S.status.demo ? " · demo company" : ""}</div>`;
     html += `<table><thead><tr><th>Quarter</th><th>Revenue</th><th>Net profit</th><th>Op margin</th><th>EPS</th></tr></thead><tbody>` +
       rows.slice(0, 6).map((q) => `<tr><td>${esc(q.fiscal || q.end)}</td><td>${cr(q.revenue)}</td><td>${cr(q.net_income)}</td><td>${q.revenue && q.operating_income != null ? fmt(100 * q.operating_income / q.revenue, 1) + "%" : "—"}</td><td>${fmt(q.eps_diluted)}</td></tr>`).join("") + "</tbody></table>";
     if (r.note) html += `<div class="note" style="margin-top:8px">${esc(r.note)}</div>`;
@@ -952,7 +976,7 @@ function connect() {
     const d = JSON.parse(ev.data);
     S.status = d.status; if (d.quotes && !d.quotes._error) Object.assign(S.quotes, d.quotes);
     renderTop(); renderFavs(); renderHits(); checkAlerts();
-    if (S.symbol && Date.now() - S.lastChartAt > (S.status.demo ? 1500 : 20000)) loadChart();
+    if (S.symbol && Date.now() - S.lastChartAt > 1000 * ((S.status.every && S.status.every.chart) || 20)) loadChart();
     else if (S.chart && !S.status.demo) renderChart();
   };
   es.onerror = () => { $("phase").innerHTML = '<span class="down pulse">●</span> RECONNECTING…'; };

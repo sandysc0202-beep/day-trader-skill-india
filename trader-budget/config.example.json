@@ -16,6 +16,7 @@
   "fractional": false,
   "tick_size": null,
   "broker": "fyers",
+  "fyers_plan": "standard",
   "paper": true,
   "blocked": [],
   "allow_options": false,

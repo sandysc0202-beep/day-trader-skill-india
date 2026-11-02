@@ -148,3 +148,74 @@ class DemoDashboard(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LiveFyers(unittest.TestCase):
+    """Live mode with FYERS swapped for a fake: FYERS first, Yahoo when FYERS is down."""
+
+    def setUp(self):
+        from test_fyers import FakeFyers, CANDLES, Resp
+
+        class AnyDay(FakeFyers):                            # the fake's bars, whatever dates are asked for
+            def __call__(self, req, timeout=20):
+                if "/data/history" in req.full_url:
+                    self.calls.append((req.get_method(), req.full_url, dict(req.header_items())))
+                    return Resp(json.dumps({"s": "ok", "code": 200, "candles": CANDLES[2:]}).encode())
+                return super().__call__(req, timeout)
+        self.cwd = os.getcwd()
+        self.d = tempfile.mkdtemp()
+        self.app = srv.App(os.path.join(self.d, "live"), False, 8765)
+        with open(srv.fyers.CONFIG, "w") as fh:
+            json.dump({"app_id": "ABCD1234-100", "redirect_uri": "http://127.0.0.1:8765/fyers/callback"}, fh)
+        with open(srv.fyers.TOKEN, "w") as fh:
+            json.dump({"access_token": "tok", "day": srv.fyers.token_day(srv.fyers.ist_now())}, fh)
+        self.bridge = srv.scan_mod.fyers_bridge()          # the copy the tools import
+        self.fake = AnyDay()
+        self.mods = [srv.fyers, self.bridge]
+        for m in self.mods:
+            m._urlopen = self.fake
+        self.yahoo = []
+        self.real_http = srv.scan_mod.http_get
+        srv.scan_mod.http_get = self.fake_yahoo
+
+    def fake_yahoo(self, url, timeout=20):
+        self.yahoo.append(url)
+        return json.dumps({"spark": {"result": [{"symbol": "RELIANCE.NS", "response": [{
+            "meta": {"symbol": "RELIANCE.NS", "regularMarketPrice": 1400.0, "chartPreviousClose": 1390.0},
+            "timestamp": [1, 2], "indicators": {"quote": [{"close": [1395.0, 1400.0]}]}}]}]}})
+
+    def tearDown(self):
+        for m in self.mods:
+            m._urlopen = m.urllib.request.urlopen
+        srv.scan_mod.http_get = self.real_http
+        os.chdir(self.cwd)
+        shutil.rmtree(self.d)
+
+    def test_prices_come_from_fyers(self):
+        self.assertEqual(self.app.source(), "fyers")
+        q = self.app.quotes(["RELIANCE"])
+        self.assertEqual((q["RELIANCE"]["src"], q["RELIANCE"]["price"]), ("fyers", 1418.5))
+        self.assertTrue(q["RELIANCE"]["spark"])
+        c = self.app.chart("RELIANCE")
+        self.assertEqual(c["source"], "fyers")
+        st = self.app.status()
+        self.assertEqual((st["panels"]["quotes"], st["panels"]["chart"], st["plan"]), ("fyers", "fyers", "standard"))
+        self.assertEqual(self.yahoo, [])
+
+    def test_prime_is_one_switch_away(self):
+        self.app.fyers_setup({"app_id": "ABCD1234-100", "plan": "prime"})
+        st = self.app.status()
+        self.assertEqual((st["plan"], st["config"]["fyers_plan"], st["every"]["quotes"]), ("prime", "prime", 1))
+        self.app.quotes(["RELIANCE", "INFY"])
+        self.assertIn("POST", [m for m, u, _ in self.fake.calls if "/data/quotes" in u])
+
+    def test_fyers_down_means_yahoo(self):
+        def down(req, timeout=20):
+            raise srv.fyers.urllib.error.URLError("connection reset by peer")
+        for m in self.mods:
+            m._urlopen = down
+        q = self.app.quotes(["RELIANCE"])
+        self.assertEqual((q["RELIANCE"]["src"], q["RELIANCE"]["price"]), ("yahoo", 1400.0))
+        st = self.app.status()
+        self.assertEqual(st["panels"]["quotes"], "yahoo")
+        self.assertIn("connection reset by peer", st["panels"]["quotes_note"])

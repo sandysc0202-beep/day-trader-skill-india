@@ -135,10 +135,12 @@ left out as unusable.
   5-minute bars, bar by bar, never tick by tick. query2 first, query1 on a 429
   or 5xx, one retry after a 5-second wait on a 429.
 - **FYERS instead of Yahoo.** After the morning FYERS login (trader-broker
-  `fyers_api.py login`) the bars come from FYERS: official and free, but 50
-  data calls a minute, so a FYERS scan takes a watchlist of up to 40 symbols
-  (`--symbols` or `--watchlist`). For the whole market, run the scan with
-  `TRADER_DATA_SOURCE=yahoo`.
+  `fyers_api.py login`) the bars come from FYERS, one request per symbol. On
+  the free standard plan (50 calls a minute) a FYERS scan takes up to 40
+  symbols and a bigger one runs on Yahoo, with a note. With
+  `"fyers_plan": "prime"` in the config, the whole market runs on FYERS at up
+  to 450 requests a minute (about 5 minutes for 2,000 symbols). If FYERS
+  fails mid-scan, Yahoo answers and the scan says so.
 - Partial results are said as partial: "Fetched 1,980 of 2,050 charts (70
   failed or had no data)". Never round a partial scan up to "the whole market".
 - NSE's 2026 trading holidays are in the calendar (NSE has no half days). Add

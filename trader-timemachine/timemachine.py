@@ -197,6 +197,16 @@ def fyers_bridge():
     return fyers_api if fyers_api.data_source() == "fyers" else None
 
 
+_fell_back = []
+
+
+def fyers_fallback(err):
+    """FYERS failed (down, logged out, a limit): say so once on stderr, and Yahoo answers instead."""
+    if not _fell_back:
+        sys.stderr.write("FYERS: %s; using Yahoo for this instead.\n" % err)
+    _fell_back.append(str(err))
+
+
 def fetch_chart(sym):
     """One request for 60 days of 5-min bars. query2 first, one retry after a 429,
     then query1 on 429 or 5xx. When FYERS is the data source, the bars come from FYERS."""
@@ -205,7 +215,7 @@ def fetch_chart(sym):
         try:
             return fy.yahoo_compat(chart_url(sym))
         except fy.FyersError as e:
-            raise TMError(str(e))
+            fyers_fallback(e)
     last = None
     for n, host in enumerate(HOSTS):
         if n:

@@ -163,7 +163,41 @@ class Basics(Base):
         fy._pace()
         self.assertTrue(slept and slept[0] > 50)            # so this one waits out the minute
         with open(fy.PACE_FILE) as fh:
-            self.assertEqual(len(json.load(fh)), 46)
+            doc = json.load(fh)
+        self.assertEqual((len(doc["calls"]), doc["count"], doc["plan"]), (46, 1, "standard"))
+
+    def prime(self):
+        with open(fy.APP_CONFIG, "w") as fh:
+            json.dump({"fyers_plan": "prime"}, fh)
+
+    def test_the_plan_sets_the_pace(self):
+        now = 1000.0
+        self.assertEqual(fy.plan_name(), "standard")
+        self.assertGreater(fy._wait([now - 30] * 45, now)[0], 0)              # standard: 45 a minute
+        self.prime()
+        self.assertEqual(fy.plan_name(), "prime")
+        self.assertEqual(fy._wait([now - 30] * 449, now)[0], 0)               # Prime: up to 450 a minute
+        self.assertGreater(fy._wait([now - 30] * 450, now)[0], 0)
+        self.assertGreater(fy._wait([now - 0.5] * 9, now)[0], 0)              # and 9 a second
+        os.environ["FYERS_PLAN"] = "standard"
+        try:
+            self.assertEqual(fy.plan_name(), "standard")                      # the environment wins
+        finally:
+            del os.environ["FYERS_PLAN"]
+        with open(fy.APP_CONFIG, "w") as fh:
+            json.dump({"fyers_plan": "gold"}, fh)
+        self.assertEqual(fy.plan_name(), "standard")                          # unknown: the safe one
+
+    def test_the_daily_limit_stops_fyers_for_the_day(self):
+        day = fy.ist_now().date().isoformat()
+        with open(fy.PACE_FILE, "w") as fh:
+            json.dump({"day": day, "count": 4800, "calls": []}, fh)
+        with self.assertRaises(fy.FyersError) as e:
+            fy._pace()
+        self.assertIn("Yahoo until tomorrow", str(e.exception))
+        with open(fy.PACE_FILE, "w") as fh:                                   # yesterday's count is gone
+            json.dump({"day": "2000-01-01", "count": 4800, "calls": []}, fh)
+        fy._pace()
 
 
 class Bridge(Base):
@@ -203,6 +237,52 @@ class Bridge(Base):
     def test_long_ranges_are_split_at_100_days(self):
         fy.history("RELIANCE", "5", datetime.date(2026, 1, 1), datetime.date(2026, 6, 30))
         self.assertEqual(len([c for c in self.fake.calls if "/data/history" in c[1]]), 2)
+
+    def test_prime_quotes_go_1000_at_a_time(self):
+        with open(fy.APP_CONFIG, "w") as fh:
+            json.dump({"fyers_plan": "prime"}, fh)
+        fy.quotes(["S%d" % i for i in range(1500)])
+        q = [c for c in self.fake.calls if "/data/quotes" in c[1]]
+        self.assertEqual([m for m, _, _ in q], ["POST", "POST"])               # 1,000 + 500
+        fy.quotes(["RELIANCE"])
+        os.remove(fy.APP_CONFIG)
+        del self.fake.calls[:]
+        fy.quotes(["S%d" % i for i in range(120)])
+        self.assertEqual(len([c for c in self.fake.calls if "/data/quotes" in c[1]]), 3)   # standard: 50 a GET
+
+    def test_a_scan_asks_for_quotes_once(self):
+        fy.yahoo_compat(scan.spark_path(["RELIANCE", "INFY", "TCS"], "1d", "5m"), self.now)
+        self.assertEqual(len([c for c in self.fake.calls if "/data/quotes" in c[1]]), 1)
+        self.assertEqual(len([c for c in self.fake.calls if "/data/history" in c[1]]), 3)
+
+    def test_prime_scans_the_whole_market_with_fyers(self):
+        with open(fy.APP_CONFIG, "w") as fh:
+            json.dump({"fyers_plan": "prime"}, fh)
+
+        class A:
+            offline, json, quiet = None, True, True
+        try:
+            self.assertEqual(scan.pick_source(["S%d" % i for i in range(2000)], A), "fyers")
+        finally:
+            os.environ.pop("TRADER_DATA_SOURCE", None)
+
+    def test_fyers_down_means_yahoo_not_an_error(self):
+        bridge = entry.fyers_bridge()                       # the copy of fyers_api the tools import
+        self.assertIsNotNone(bridge)
+
+        def down(req, timeout=20):
+            raise bridge.urllib.error.URLError("connection reset by peer")
+        real_fy, real_open = bridge._urlopen, entry._open_url
+        yahoo = []
+        bridge._urlopen = down
+        entry._open_url = lambda url, timeout=20: yahoo.append(url) or '{"chart": {"result": []}}'
+        try:
+            text = entry.yahoo_get(entry.chart_path("RELIANCE", "1d", "5m"))
+        finally:
+            bridge._urlopen, entry._open_url = real_fy, real_open
+        self.assertEqual(text, '{"chart": {"result": []}}')
+        self.assertIn("query2.finance.yahoo.com", yahoo[0])
+        self.assertIn("connection reset by peer", entry._fell_back[-1])
 
     def test_a_market_scan_goes_to_yahoo_not_fyers(self):
         """A whole-market scan in FYERS would use up the day's 5,000 data calls: it goes to Yahoo."""

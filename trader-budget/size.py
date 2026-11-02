@@ -79,6 +79,7 @@ DEFAULTS = {
     "fractional": False,
     "tick_size": None,
     "broker": "fyers",
+    "fyers_plan": "standard",   # or "prime": how fast the pack may call FYERS (fyers_api.py)
     "paper": True,
     "blocked": [],
     "allow_options": False,

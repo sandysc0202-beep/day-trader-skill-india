@@ -249,6 +249,16 @@ def fyers_bridge():
     return fyers_api if fyers_api.data_source() == "fyers" else None
 
 
+_fell_back = []
+
+
+def fyers_fallback(err):
+    """FYERS failed (down, logged out, a limit): say so once on stderr, and Yahoo answers instead."""
+    if not _fell_back:
+        sys.stderr.write("FYERS: %s; using Yahoo for this instead.\n" % err)
+    _fell_back.append(str(err))
+
+
 def fetch_yahoo(sym, timeout=20):
     """query2 first. A 429 waits BACKOFF seconds and tries once more; a 429 or a 5xx
     after that moves on to query1. A 404 comes back as Yahoo's own error JSON.
@@ -258,7 +268,7 @@ def fetch_yahoo(sym, timeout=20):
         try:
             return fy.yahoo_compat(yahoo_url(sym, YAHOO_HOSTS[0]))
         except fy.FyersError as e:
-            raise AlertError(str(e))
+            fyers_fallback(e)
     last = None
     for host in YAHOO_HOSTS:
         url = yahoo_url(sym, host)

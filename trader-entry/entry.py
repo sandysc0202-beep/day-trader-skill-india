@@ -259,6 +259,16 @@ def fyers_bridge():
     return fyers_api if fyers_api.data_source() == "fyers" else None
 
 
+_fell_back = []
+
+
+def fyers_fallback(err):
+    """FYERS failed (down, logged out, a limit): say so once on stderr, and Yahoo answers instead."""
+    if not _fell_back:
+        sys.stderr.write("FYERS: %s; using Yahoo for this instead.\n" % err)
+    _fell_back.append(str(err))
+
+
 def yahoo_get(path):
     """GET a Yahoo path: query2 first, query1 when query2 answers 429 or 5xx.
     An HTTP 429 gets one retry on the same host after BACKOFF seconds.
@@ -268,7 +278,7 @@ def yahoo_get(path):
         try:
             return fy.yahoo_compat(path)
         except fy.FyersError as e:
-            raise EntryError(str(e))
+            fyers_fallback(e)
     last = "no answer"
     for host in HOSTS:
         url = "https://%s.finance.yahoo.com%s" % (host, path)

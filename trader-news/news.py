@@ -328,6 +328,16 @@ def fyers_bridge():
     return fyers_api if fyers_api.data_source() == "fyers" else None
 
 
+_fell_back = []
+
+
+def fyers_fallback(err):
+    """FYERS failed (down, logged out, a limit): say so once on stderr, and Yahoo answers instead."""
+    if not _fell_back:
+        sys.stderr.write("FYERS: %s; using Yahoo for this instead.\n" % err)
+    _fell_back.append(str(err))
+
+
 def collect_moves(fetcher, watch, errors=None):
     errors = [] if errors is None else errors
     out = []
@@ -339,9 +349,9 @@ def collect_moves(fetcher, watch, errors=None):
                 try:
                     out.append(parse_chart(fy.yahoo_compat(CHART % ("query2", urllib.parse.quote(
                         yahoo_symbol(t), safe="-."))), t))
+                    continue
                 except fy.FyersError as exc:
-                    errors.append("price for %s: %s" % (t, exc))
-                continue
+                    fyers_fallback(exc)
             try:
                 data = fetcher.get(CHART % ("query2", urllib.parse.quote(yahoo_symbol(t), safe="-.")), name)
             except NewsError as exc:

@@ -225,6 +225,16 @@ def fyers_bridge():
     return fyers_api if fyers_api.data_source() == "fyers" else None
 
 
+_fell_back = []
+
+
+def fyers_fallback(err):
+    """FYERS failed (down, logged out, a limit): say so once on stderr, and Yahoo answers instead."""
+    if not _fell_back:
+        sys.stderr.write("FYERS: %s; using Yahoo for this instead.\n" % err)
+    _fell_back.append(str(err))
+
+
 def yahoo_get(path):
     """GET a Yahoo Finance path. query2 first, query1 on a 429 or 5xx, and one
     more round after BACKOFF seconds if a 429 was seen. 4xx other than 429 is final.
@@ -234,7 +244,7 @@ def yahoo_get(path):
         try:
             return fy.yahoo_compat(path)
         except fy.FyersError as e:
-            raise ScanError(str(e))
+            fyers_fallback(e)
     last = "no answer"
     for attempt in (0, 1):
         saw_429 = False
@@ -884,12 +894,17 @@ def pick_source(symbols, a):
     fy = fyers_bridge()
     if not fy:
         return "yahoo"
-    if len(symbols) > fy.SPARK_LIMIT:
+    if len(symbols) > fy.scan_limit():
         os.environ["TRADER_DATA_SOURCE"] = "yahoo"
-        progress(a, "FYERS' free plan allows 50 data calls a minute, so these %s symbols come from Yahoo "
-                    "this run. Scan a watchlist of up to %d (--symbols or --watchlist) for FYERS data."
-                 % ("{:,}".format(len(symbols)), fy.SPARK_LIMIT))
+        progress(a, "FYERS' standard plan allows 50 data calls a minute, so these %s symbols come from Yahoo "
+                    "this run. Scan a watchlist of up to %d (--symbols or --watchlist) for FYERS data, or set "
+                    "\"fyers_plan\": \"prime\" in trader/config.json if you have FYERS Prime."
+                 % ("{:,}".format(len(symbols)), fy.scan_limit()))
         return "yahoo"
+    if len(symbols) > 200:
+        progress(a, "FYERS %s: %s symbols, one history request each at up to %d a minute (about %d min)."
+                 % (fy.plan_name(), "{:,}".format(len(symbols)), fy.plan()["per_minute"],
+                    max(1, len(symbols) // fy.plan()["per_minute"] + 1)))
     return "fyers"
 
 

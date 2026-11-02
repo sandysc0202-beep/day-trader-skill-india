@@ -1,6 +1,6 @@
 {
   "name": "day-trader-skill-india",
-  "description": "10 Claude skills for day trading on NSE: scan the market's charts, track breaking news and NSE filings, time every entry and exit, and replay every outcome before you risk a rupee.",
+  "description": "11 Claude skills for day trading on NSE: scan the market's charts, track breaking news and NSE filings, time every entry and exit, replay every outcome and backtest the strategy before you risk a rupee.",
   "version": "2.0.0-in.1",
   "author": {
     "name": "Jake Schincariol (original); India edition by sandysc0202-beep",

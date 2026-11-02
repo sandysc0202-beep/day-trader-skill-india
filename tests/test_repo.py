@@ -7,9 +7,9 @@ from _load import ROOT
 
 # the India edition: the upstream v2 pack less the US-only Pelosi tracker
 SKILLS = ["trader-scanner", "trader-news", "trader-entry", "trader-exit", "trader-timemachine",
-          "trader-risk", "trader-budget", "trader-broker", "trader-alerts", "trader-analyst"]
-ABOUT = ("10 Claude skills for day trading on NSE: scan the market's charts, track breaking news and NSE filings, "
-         "time every entry and exit, and replay every outcome before you risk a rupee.")
+          "trader-risk", "trader-budget", "trader-broker", "trader-alerts", "trader-analyst", "trader-backtest"]
+ABOUT = ("11 Claude skills for day trading on NSE: scan the market's charts, track breaking news and NSE filings, "
+         "time every entry and exit, replay every outcome and backtest the strategy before you risk a rupee.")
 # skills on the way to an order carry the safety block
 ORDER_PATH = ["trader-scanner", "trader-entry", "trader-exit", "trader-timemachine", "trader-budget",
               "trader-risk", "trader-broker", "trader-alerts"]
@@ -32,7 +32,7 @@ def every_text_file():
 
 
 class Repo(unittest.TestCase):
-    def test_ten_skill_folders_at_the_root(self):
+    def test_eleven_skill_folders_at_the_root(self):
         found = sorted(d for d in os.listdir(ROOT)
                        if os.path.isfile(os.path.join(ROOT, d, "SKILL.md")))
         self.assertEqual(found, sorted(SKILLS))

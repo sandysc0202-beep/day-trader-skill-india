@@ -1,6 +1,6 @@
 # The Day Trader skill, India edition
 
-10 Claude skills for day trading on NSE: scan the market's charts, track breaking news and NSE filings, time every entry and exit, and replay every outcome before you risk a rupee.
+11 Claude skills for day trading on NSE: scan the market's charts, track breaking news and NSE filings, time every entry and exit, replay every outcome and backtest the strategy before you risk a rupee.
 
 Free, MIT, no signup. The tools are plain Python that read free data: FYERS'
 official NSE bars and quotes once you log in to FYERS each morning (free API),
@@ -102,7 +102,7 @@ and logs you in on FYERS' own page; after that the charts and quotes are
 FYERS' and a live order goes through `ticket.py place`. See
 `dashboard/README.md`.
 
-## The ten
+## The eleven
 
 | command | job | what it does |
 | --- | --- | --- |
@@ -116,6 +116,7 @@ FYERS' and a live order goes through `ticket.py place`. See
 | `/trader-broker` | Order Executor | Sends approved orders to FYERS, paper trading by default, never without your yes. Logs you in to FYERS each morning. |
 | `/trader-alerts` | Price Alerts | Rings when a price, a stop, the target or the opening bell hits. |
 | `/trader-analyst` | Earnings Analyst | Reads quarterly results and sums up what changed. |
+| `/trader-backtest` | Backtester | Replays the strategy over the last year of NSE sessions from FYERS, after charges: win rate, average R, worst losing streak, drawdown, month by month. |
 
 ## How to use it
 
@@ -203,6 +204,7 @@ python3 trader-broker/fyers_api.py login                               # each mo
 python3 trader-alerts/alerts.py add --from-plan                        # stop, target, flat by close
 python3 trader-alerts/alerts.py check                                  # rings what hit, once
 python3 trader-analyst/facts.py RELIANCE                               # quarters, growth, EPS, in crore
+python3 trader-backtest/backtest.py run --symbols RELIANCE,INFY,SBIN   # a year of the strategy, after charges
 ```
 
 ```bash
@@ -289,6 +291,7 @@ trader-budget/      SKILL.md, size.py, config.example.json, targets.example.json
 trader-broker/      SKILL.md, ticket.py, fyers_api.py, claude_desktop_config.example.json
 trader-alerts/      SKILL.md, alerts.py, alerts.example.json
 trader-analyst/     SKILL.md, facts.py, metrics.example.json
+trader-backtest/    SKILL.md, backtest.py
 dashboard/          server.py, index.html, README.md: the local trading screen
 tests/              unittest suite + offline fixtures
 ```

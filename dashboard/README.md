@@ -29,6 +29,13 @@ Then open http://127.0.0.1:8765 (it opens by itself unless `--no-browser`).
 | 08 Journal | every closed trade with P&L and R, win rate, net, the equity curve | the fill log |
 | RESULTS | the quarterly numbers for the symbol on screen | `facts.py` |
 
+**BACKTEST** replays the strategy over past sessions for your favourites (or
+the symbols you type), the last year by default, with your rules and FYERS'
+charges: trades, win rate, average R after charges, net P&L, the worst losing
+run, max drawdown, profit factor, an equity curve and every month. It runs
+`trader-backtest/backtest.py`; a year needs today's FYERS login (Yahoo keeps
+60 days), and the bars are cached so the next run is quick.
+
 **ANALYZE ▸** runs the entry check, and if it triggered, the plan, the Time
 Machine, the size and the risk check for the symbol on screen. It places
 nothing.

@@ -55,6 +55,7 @@ TOOLS = {
     "alerts": os.path.join(ROOT, "trader-alerts", "alerts.py"),
     "news": os.path.join(ROOT, "trader-news", "news.py"),
     "facts": os.path.join(ROOT, "trader-analyst", "facts.py"),
+    "backtest": os.path.join(ROOT, "trader-backtest", "backtest.py"),
 }
 DEMO_DAY = datetime.date(2026, 10, 19)
 DEMO_END = datetime.time(10, 45)           # the saved charts run to 10:05 (TSLA to 10:43)
@@ -600,6 +601,27 @@ class App:
             raise ToolError((r["error"] or r["text"])[-400:])
         return r["data"][0] if isinstance(r["data"], list) and r["data"] else r["data"]
 
+    def backtest(self, body):
+        """The strategy over past sessions (trader-backtest), after FYERS' charges."""
+        args = ["run", "--json"]
+        for k, flag in (("target", "--target"), ("stop", "--stop")):
+            if body.get(k):
+                args += [flag, str(body[k])]
+        if self.demo:
+            args += ["--symbols", "TSLA", "--offline", DEMO["tm"]["TSLA"], "--to", DEMO_DAY.isoformat(), "--days", "90"]
+        else:
+            syms = [s for s in str(body.get("symbols") or "").replace(",", " ").upper().split() if s]
+            if syms:
+                args += ["--symbols", ",".join(syms)]
+            else:
+                args += ["--watchlist", os.path.join("trader", "favorites.txt")]
+            args += ["--days", str(int(body.get("days") or 365))]
+        r = self.run("backtest", args, timeout=3600)
+        if r["data"] is None:
+            raise ToolError((r["error"] or r["text"] or "the backtest failed")[-500:])
+        self.panel("backtest", "demo" if self.demo else ",".join(sorted(r["data"].get("sources", {}))) or "none")
+        return r["data"]
+
     # ------------------------------------------------ the book
 
     def book(self):
@@ -811,6 +833,8 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/news":
                 syms = [s for s in q.get("symbols", "").split(",") if s]
                 return self._send(200, app.news(syms))
+            if u.path == "/api/backtest":
+                return self._send(200, read_json(os.path.join("trader", "backtest.json"), {}) or {})
             if u.path == "/api/analyst":
                 return self._send(200, app.analyst(q.get("symbol", "").upper()))
             if u.path == "/api/stream":
@@ -855,6 +879,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, app.plan(b))
             if u.path == "/api/timemachine":
                 return self._send(200, app.timemachine())
+            if u.path == "/api/backtest":
+                return self._send(200, app.backtest(b))
             if u.path == "/api/size":
                 return self._send(200, app.size(b))
             if u.path == "/api/risk":

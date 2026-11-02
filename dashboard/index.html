@@ -315,6 +315,7 @@ footer { position: relative; z-index: 2; text-align: center; color: var(--dim); 
           <span class="tag" id="symSrc"></span>
         </div>
         <div class="row">
+          <button class="sm" id="btnBacktest" title="The strategy over the last year, after charges (trader-backtest)">BACKTEST</button>
           <button class="sm" id="btnResults" title="Quarterly results (trader-analyst)">RESULTS</button>
           <button class="hot sm" id="btnAnalyze" title="Entry, plan, time machine, size and risk check for this symbol. Places nothing.">ANALYZE ▸</button>
         </div>
@@ -969,6 +970,55 @@ async function resultsModal() {
   } catch (e) { $("mBody").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
 }
 
+/* ====================================================================== backtest */
+function backtestModal() {
+  const demo = S.status.demo;
+  openModal("BACKTEST · OPENING-RANGE BREAKOUT", `
+    <div class="note" style="margin-bottom:10px">Replays the pack's own rules over past sessions: the 15-minute range, entries 9:30 to ${esc(S.status.config.no_entries_after || "14:45")},
+      flat by ${esc(S.status.config.flat_by || "15:00")}, whole shares sized to your max loss, your day limits, FYERS' charges and slippage. ${demo ? "Demo: 60 days of TSLA bars." : "A year needs today's FYERS login (Yahoo keeps 60 days)."}</div>
+    ${demo ? "" : `<div class="field"><label for="btSyms">Symbols (blank = your favourites)</label><input id="btSyms" placeholder="RELIANCE, HDFCBANK, INFY"></div>`}
+    <div class="row" style="margin-bottom:12px">
+      ${demo ? "" : `<select id="btDays" aria-label="Period"><option value="365">last year</option><option value="180">6 months</option><option value="90">3 months</option></select>`}
+      <select id="btTarget" aria-label="Target"><option value="2R">target 2R</option><option value="1.5R">1.5R</option><option value="1R">1R</option><option value="3R">3R</option></select>
+      <select id="btStop" aria-label="Stop"><option value="or-mid">stop: OR midpoint</option><option value="or-low">stop: OR low</option></select>
+      <button class="hot" id="btRun">RUN BACKTEST</button></div>
+    <div id="btOut"></div>`);
+  $("btRun").onclick = () => busy("bt", $("btRun"), async () => {
+    $("btOut").innerHTML = '<div class="empty"><span class="spin"></span> Replaying the sessions… a year of a few dozen stocks takes a few minutes the first time (the bars are cached after).</div>';
+    try {
+      const r = await api("/api/backtest", { symbols: demo ? "" : $("btSyms").value, days: demo ? 90 : $("btDays").value,
+        target: $("btTarget").value, stop: $("btStop").value });
+      renderBacktest(r);
+    } catch (e) { $("btOut").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  });
+  api("/api/backtest").then((r) => { if (r && r.summary && $("btOut") && !$("btOut").innerHTML) renderBacktest(r); }).catch(() => {});
+}
+function renderBacktest(r) {
+  const s = r.summary || {}, p = r.params || {};
+  if (!s.trades) { $("btOut").innerHTML = '<div class="empty">No trades: no breakout passed the rules in this window.</div>'; return; }
+  const src = Object.entries(r.sources || {}).map(([k, v]) => `${k === "fyers" ? "FYERS" : k === "yahoo" ? "Yahoo" : "saved"} ${v}`).join(", ");
+  let h = `<div class="note" style="margin-bottom:8px">${esc(p.from)} → ${esc(p.to)} · ${p.symbols} symbol${p.symbols === 1 ? "" : "s"} · ${r.sessions} sessions · data: ${esc(src)} · target ${p.target_r}R · ${esc(p.stop)} · FYERS ${esc(p.plan)}</div>
+    <div class="stat3" style="grid-template-columns:repeat(4,1fr)">
+      <div class="stat"><div class="l">Trades</div><div class="v">${s.trades}</div></div>
+      <div class="stat"><div class="l">Win rate</div><div class="v">${s.win_rate}%</div></div>
+      <div class="stat"><div class="l">Avg R net</div><div class="v ${cls(s.avg_r_net)}">${s.avg_r_net >= 0 ? "+" : ""}${fmt(s.avg_r_net, 2)}</div></div>
+      <div class="stat"><div class="l">Net P&amp;L</div><div class="v ${cls(s.net)}" style="font-size:14px">${inr(s.net, 0)}</div></div>
+      <div class="stat"><div class="l">Worst losing run</div><div class="v down">${s.worst_losing_streak}</div></div>
+      <div class="stat"><div class="l">Max drawdown</div><div class="v down" style="font-size:14px">${inr(-s.max_drawdown, 0)}</div></div>
+      <div class="stat"><div class="l">Profit factor</div><div class="v">${s.profit_factor != null ? s.profit_factor : "—"}</div></div>
+      <div class="stat"><div class="l">Charges</div><div class="v" style="font-size:14px">${inr(s.charges, 0)}</div></div></div>
+    <div class="note" style="margin-top:8px">Avg R before charges ${fmt(s.avg_r, 2)} · exits: ${Object.entries(s.outcomes).map(([k, v]) => esc(k) + " " + v).join(", ")} · avg win ${inr(s.avg_win, 0)}, avg loss ${inr(s.avg_loss, 0)}</div>
+    <canvas id="btEq" style="width:100%;height:80px;margin-top:10px"></canvas>
+    <table style="margin-top:8px"><thead><tr><th>Month</th><th>Trades</th><th>Win %</th><th>Net</th></tr></thead><tbody>` +
+    Object.entries(s.months).map(([m, v]) => `<tr><td>${esc(m)}</td><td>${v.trades}</td><td>${Math.round(100 * v.wins / v.trades)}%</td><td class="${cls(v.net)}">${inr(v.net, 0)}</td></tr>`).join("") +
+    `</tbody></table>`;
+  for (const n of r.notes || []) h += `<div class="note amber" style="margin-top:6px">⚠ ${esc(n)}</div>`;
+  if (s.trades < 100) h += `<div class="note amber" style="margin-top:6px">⚠ ${s.trades} trades is a small sample: add symbols or months before trusting the numbers.</div>`;
+  h += '<div class="note" style="margin-top:8px">History, not a forecast: fills at bar closes, no order book or circuits, and today\'s list tested on the past. Every trade is in trader/backtest-trades.csv.</div>';
+  $("btOut").innerHTML = h;
+  spark($("btEq"), [0].concat(s.equity), s.net >= 0 ? "#2bff9a" : "#ff3d71");
+}
+
 /* ====================================================================== stream + boot */
 function connect() {
   const es = new EventSource("/api/stream");
@@ -991,6 +1041,7 @@ async function boot() {
   $("btnRisk").onclick = (e) => doRisk(e.currentTarget);
   $("btnAnalyze").onclick = (e) => analyze(e.currentTarget);
   $("btnResults").onclick = resultsModal;
+  $("btnBacktest").onclick = backtestModal;
   $("btnNews").onclick = refreshNews;
   $("btnFyers").onclick = fyersModal;
   $("mClose").onclick = closeModal;

@@ -149,6 +149,13 @@ class DemoDashboard(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+    def test_7_backtest(self):
+        code, r = self.post("/api/backtest", {"target": "2R"})
+        self.assertEqual(code, 200)
+        self.assertEqual((r["summary"]["trades"], r["summary"]["worst_losing_streak"]), (33, 7))
+        code, again = self.call("GET", "/api/backtest")
+        self.assertEqual(again["summary"]["net"], r["summary"]["net"])
+
 
 class LiveFyers(unittest.TestCase):
     """Live mode with FYERS swapped for a fake: FYERS first, Yahoo when FYERS is down."""

@@ -825,10 +825,10 @@ def cmd_log(a):
     for r in rows:
         extra = (" id " + r["broker_order_id"]) if r.get("broker_order_id") else ""
         reply = (' reply "%s"' % r["reply"]) if r.get("reply") and r["status"] in ("approved", "declined") else ""
-        loss = (" max loss %s" % _money(r["max_loss"])) if r.get("max_loss") is not None and r["status"] == "placed" else ""
+        loss = (" max loss %s" % _money(r["max_loss"])) if r.get("max_loss") is not None and r["status"] in ("placed", "paper") else ""
         idx = ("#%s" % r["index"]) if r.get("index") is not None else "  "
         print("%s  %s %-9s %s%s%s%s" % (r.get("at"), idx, r.get("status"), r.get("plain"), reply, loss, extra))
-    placed = sum(1 for r in rows if r.get("status") == "placed")
+    placed = sum(1 for r in rows if r.get("status") in ("placed", "paper"))
     print("%d placed%s." % (placed, "" if a.all else " today"))
     return 0
 

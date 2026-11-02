@@ -875,6 +875,24 @@ def cmd_universe(a):
     return 0 if kept else 1
 
 
+def pick_source(symbols, a):
+    """'fyers' or 'yahoo' for this run. FYERS gives one symbol per history call and its free
+    plan allows 50 calls a minute and 5,000 a day, so a list longer than a watchlist goes to
+    Yahoo's batches of 20 for this run, with a note, instead of using up the day's FYERS calls."""
+    if a.offline:
+        return "yahoo"                      # saved Yahoo answers
+    fy = fyers_bridge()
+    if not fy:
+        return "yahoo"
+    if len(symbols) > fy.SPARK_LIMIT:
+        os.environ["TRADER_DATA_SOURCE"] = "yahoo"
+        progress(a, "FYERS' free plan allows 50 data calls a minute, so these %s symbols come from Yahoo "
+                    "this run. Scan a watchlist of up to %d (--symbols or --watchlist) for FYERS data."
+                 % ("{:,}".format(len(symbols)), fy.SPARK_LIMIT))
+        return "yahoo"
+    return "fyers"
+
+
 def cmd_daily(a):
     t0 = time.time()
     now = parse_now(a.now)
@@ -883,6 +901,7 @@ def cmd_daily(a):
         data, failed = load_offline(a.offline)
         offline_syms = sorted(set(data) | set(failed))
     symbols = read_symbols(a, offline_syms)
+    source = pick_source(symbols, a)
     if not a.offline:
         progress(a, "Fetching daily closes for %s symbols (%d spark requests)..."
                  % ("{:,}".format(len(symbols)), (len(symbols) + SPARK_MAX - 1) // SPARK_MAX))
@@ -892,7 +911,7 @@ def cmd_daily(a):
     as_of = ("%s close" % last_date.isoformat()) if last_date else None
     doc = {"created_by": "trader-scanner", "created_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "mode": "daily",
            "as_of": as_of, "universe": len(symbols), "scanned": counts["scanned"], "failed": nfailed,
-           "source": "yahoo", "filters": {"min_price": a.min_price, "min_volume": a.min_volume},
+           "source": source, "filters": {"min_price": a.min_price, "min_volume": a.min_volume},
            "note": NOTE, "hits": hits}
     if a.offline:
         doc["offline"] = os.path.basename(a.offline.rstrip("/"))
@@ -954,6 +973,7 @@ def cmd_orb(a):
                     raise ScanError("offline replay: give --at HH:MM or --now \"YYYY-MM-DD HH:MM\"")
     day, cutoff = orb_window(now, at, a.or_minutes, until, explicit_day)
     symbols = read_symbols(a, offline_syms)
+    source = pick_source(symbols, a)
     confirm = None
     if not a.offline:
         today = to_ist(parse_now(None)).date()
@@ -980,7 +1000,7 @@ def cmd_orb(a):
     as_of = "%s %s IST" % (day.isoformat(), cutoff.strftime("%H:%M"))
     doc = {"created_by": "trader-scanner", "created_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "mode": "orb",
            "as_of": as_of, "universe": len(symbols), "scanned": counts["scanned"], "failed": nfailed,
-           "unconfirmed": counts["unconfirmed"], "source": "yahoo", "or_minutes": a.or_minutes,
+           "unconfirmed": counts["unconfirmed"], "source": source, "or_minutes": a.or_minutes,
            "interval": "%dm" % BAR_MIN,
            "filters": {"min_price": a.min_price, "min_volume": a.min_volume}, "note": NOTE, "hits": hits}
     if a.offline:
@@ -990,8 +1010,9 @@ def cmd_orb(a):
     if a.json:
         print(json.dumps(dict(doc, counts=counts, seconds=round(time.time() - t0, 1)), indent=2))
         return 0 if hits else 1
-    print("Opening-range breakout scan, %s %s IST: %d-minute range (9:15 to %s), 5-minute bars, Yahoo."
-          % (day_label(day), clock_label(cutoff), a.or_minutes, clock_label(slot(day, a.or_minutes // BAR_MIN))))
+    print("Opening-range breakout scan, %s %s IST: %d-minute range (9:15 to %s), 5-minute bars, %s."
+          % (day_label(day), clock_label(cutoff), a.or_minutes, clock_label(slot(day, a.or_minutes // BAR_MIN)),
+             "FYERS" if source == "fyers" else "Yahoo"))
     print("Fetched %s of %s charts%s; %s usable%s; %s candidates, %s confirmed with real highs and lows."
           % ("{:,}".format(counts["fetched"]), "{:,}".format(len(symbols)),
              (" (%s failed or had no data)" % "{:,}".format(nfailed)) if nfailed else "",

@@ -259,6 +259,16 @@ class Flow(unittest.TestCase):
         self.assertEqual([r["status"] for r in self.state_doc()["orders"]], ["approved", "paper", "filled"])
         with open(self.pf) as fh:
             self.assertEqual(json.load(fh)["cash"], 2086.4)
+        # a paper trade counts against today's limits exactly like a real one
+        res = check.check([tsla()], {"budget": 5000}, state=self.state_doc(), now=check.parse_now("2026-10-19 10:15"))
+        self.assertIn("already placed today", " ".join(res["results"][0]["reasons"]))
+        self.assertEqual((res["today"]["entries_placed"], res["today"]["loss_at_risk"]), (1, 46.88))
+        other = dict(tsla(), symbol="INFY")
+        res = check.check([other], {"budget": 5000, "max_trades_per_day": 1}, state=self.state_doc(),
+                          now=check.parse_now("2026-10-19 10:15"))
+        self.assertIn("trades", " ".join(res["results"][0]["reasons"]))
+        code, text, _ = run(["log", "--state", self.state, "--now", NOW])
+        self.assertIn("1 placed today", text)
 
     def test_flatten_by_the_close(self):
         self.run_risk()

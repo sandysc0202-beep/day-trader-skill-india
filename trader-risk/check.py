@@ -342,11 +342,14 @@ def rec_is_entry(rec):
     return str(rec.get("side", "")).lower() == "buy"
 
 
+PLACED = ("placed", "paper")   # a paper fill counts like a real one: practice under the same limits
+
+
 def placed_today(state, today):
-    """Orders recorded as placed today by trader-broker."""
+    """Orders recorded as placed (or paper-filled) today by trader-broker."""
     out = []
     for rec in (state or {}).get("orders", []):
-        if rec.get("status") == "placed" and rec_day(rec) == today:
+        if rec.get("status") in PLACED and rec_day(rec) == today:
             out.append(rec)
     return out
 
@@ -358,14 +361,14 @@ def day_trades(state, today):
     days = set(business_days(datetime.date.fromisoformat(today)))
     sides = {}
     for rec in (state or {}).get("orders", []):
-        if rec.get("status") not in ("placed", "filled"):
+        if rec.get("status") not in PLACED + ("filled",):
             continue
         d = rec_day(rec)
         if d not in days:
             continue
         key = (d, str(rec.get("symbol", "")).upper())
         sides.setdefault(key, set()).add(str(rec.get("side", "")).lower())
-        if d == today and rec.get("status") == "placed" and rec_is_entry(rec):
+        if d == today and rec.get("status") in PLACED and rec_is_entry(rec):
             sides[key].add("pending")
     hits = sorted("%s %s" % k for k, s in sides.items()
                   if ("buy" in s and "sell" in s) or (k[0] == today and "pending" in s))

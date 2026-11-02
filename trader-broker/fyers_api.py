@@ -31,7 +31,7 @@ token at 6:30 AM IST, so you log in once a trading day.
 Endpoints are FYERS API v3 (https://fyers.in/api-docs/). The free plan
 allows 5 data calls a second and 50 a minute, and FYERS blocks the API for
 the rest of the day after the third minute over; this module paces itself
-under that (4 a second, 45 a minute) within one process.
+under that (4 a second, 45 a minute), counted across every tool that runs.
 
 SEBI's rules (from 1 April 2026) accept API orders only from a static IP
 you registered with FYERS. Data calls do not need it.
@@ -195,17 +195,57 @@ def auth_header(cfg=None, tok=None):
 _urlopen = urllib.request.urlopen     # tests swap this
 
 
+PACE_FILE = os.path.join("trader", "state", "fyers_calls.json")
+PER_MINUTE, PER_SECOND = 45, 4                # FYERS' free plan allows 50 and 5
+
+
+def _wait(calls, now):
+    """Seconds to wait before one more call, given the wall-clock times of recent calls."""
+    calls = [t for t in calls if now - t < 60]
+    wait = 0.0
+    if len(calls) >= PER_MINUTE:
+        wait = max(wait, 60 - (now - calls[-PER_MINUTE]) + 0.05)
+    recent = [t for t in calls if now - t < 1]
+    if len(recent) >= PER_SECOND:
+        wait = max(wait, 1 - (now - recent[-PER_SECOND]) + 0.05)
+    return wait, calls
+
+
 def _pace():
-    """Stay under the free plan: 4 calls a second, 45 a minute (FYERS allows 5 and 50)."""
-    now = time.monotonic()
-    while _calls and now - _calls[0] > 60:
-        _calls.pop(0)
-    if len(_calls) >= 45:
-        SLEEP(60 - (now - _calls[0]) + 0.05)
-    recent = [t for t in _calls if now - t < 1]
-    if len(recent) >= 4:
-        SLEEP(1 - (now - recent[0]) + 0.05)
-    _calls.append(time.monotonic())
+    """Stay under the free plan: 4 calls a second, 45 a minute, counted across every tool.
+
+    The dashboard runs the scanner, the entry timer and the time machine as separate
+    programs, and FYERS blocks the API for the day after the third minute over the
+    limit, so the count lives in trader/state/fyers_calls.json behind a file lock.
+    Without a trader/state folder (or file locks), it is counted in this program only."""
+    try:
+        import fcntl
+    except ImportError:
+        fcntl = None
+    folder = os.path.dirname(PACE_FILE)
+    if fcntl is None or not os.path.isdir(folder):
+        wait, kept = _wait(_calls, time.time())
+        if wait > 0:
+            SLEEP(wait)
+        _calls[:] = kept + [time.time()]
+        return
+    with open(PACE_FILE + ".lock", "a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            calls = _read(PACE_FILE) or []
+            if not isinstance(calls, list):
+                calls = []
+            wait, calls = _wait(calls, time.time())
+            if wait > 0:
+                SLEEP(wait)
+            calls.append(time.time())
+            _calls[:] = calls
+            tmp = PACE_FILE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(calls, fh)
+            os.replace(tmp, PACE_FILE)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
 
 
 def request(method, url, body=None, auth=None, data_call=False, timeout=20):

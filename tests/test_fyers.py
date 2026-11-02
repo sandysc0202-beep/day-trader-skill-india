@@ -147,12 +147,23 @@ class Basics(Base):
         self.assertEqual(self.fake.calls[0][2]["Authorization"], "ABCD1234-100:tok123")
 
     def test_pacing_stays_under_the_free_plan(self):
+        now = 1000.0
+        self.assertEqual(fy._wait([now - 0.5] * 3, now)[0], 0)                 # a 4th call this second: fine
+        self.assertGreater(fy._wait([now - 0.5] * 4, now)[0], 0.4)             # a 5th: wait
+        minute = [now - 59 + i for i in range(45)]
+        self.assertGreater(fy._wait(minute, now)[0], 0.9)                       # the 46th in a minute: wait
+        self.assertEqual(fy._wait([now - 61] * 45, now), (0, []))              # older than a minute: forgotten
+
+    def test_the_count_is_shared_by_every_tool(self):
+        """Two programs (the dashboard and the scanner it runs) share one count, in a file."""
         slept = []
         fy.SLEEP = slept.append
-        for _ in range(46):
-            fy._pace()
-        self.assertTrue(slept)                      # 4 a second at most
-        self.assertLessEqual(len(fy._calls), 46)
+        with open(fy.PACE_FILE, "w") as fh:                  # another tool just made 45 calls
+            json.dump([fy.time.time() - 1] * 45, fh)
+        fy._pace()
+        self.assertTrue(slept and slept[0] > 50)            # so this one waits out the minute
+        with open(fy.PACE_FILE) as fh:
+            self.assertEqual(len(json.load(fh)), 46)
 
 
 class Bridge(Base):
@@ -192,6 +203,15 @@ class Bridge(Base):
     def test_long_ranges_are_split_at_100_days(self):
         fy.history("RELIANCE", "5", datetime.date(2026, 1, 1), datetime.date(2026, 6, 30))
         self.assertEqual(len([c for c in self.fake.calls if "/data/history" in c[1]]), 2)
+
+    def test_a_market_scan_goes_to_yahoo_not_fyers(self):
+        """A whole-market scan in FYERS would use up the day's 5,000 data calls: it goes to Yahoo."""
+        class A:
+            offline, json, quiet = None, True, True
+        self.assertEqual(scan.pick_source(["S%d" % i for i in range(40)], A), "fyers")
+        self.assertEqual(scan.pick_source(["S%d" % i for i in range(2000)], A), "yahoo")
+        self.assertEqual(os.environ["TRADER_DATA_SOURCE"], "yahoo")
+        self.assertIsNone(scan.fyers_bridge())
 
     def test_the_tools_switch_when_you_are_logged_in(self):
         self.assertIsNotNone(entry.fyers_bridge())

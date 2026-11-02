@@ -852,7 +852,14 @@ def main(argv=None):
     workdir = a.workdir or ("trader-demo" if a.demo else ".")
     app = App(workdir, a.demo, a.port)
     Handler.app = app
-    srv = ThreadingHTTPServer(("127.0.0.1", a.port), Handler)
+    try:
+        srv = ThreadingHTTPServer(("127.0.0.1", a.port), Handler)
+    except OSError as e:
+        print("Port %d is already in use: the dashboard is probably still running in another Terminal "
+              "window. Press Control+C there, or stop it with:\n    lsof -ti :%d | xargs kill\n"
+              "then start it again. (Keep port 8765: the FYERS login comes back to that address.)\n(%s)"
+              % (a.port, a.port, e))
+        return 1
     srv.daemon_threads = True
     url = "http://127.0.0.1:%d/" % a.port
     print("Day-trader dashboard on %s (%s, working folder %s). Ctrl+C stops it." % (

@@ -57,6 +57,8 @@ TOOLS = {
     "facts": os.path.join(ROOT, "trader-analyst", "facts.py"),
     "backtest": os.path.join(ROOT, "trader-backtest", "backtest.py"),
 }
+# The tools print ₹: on Windows a pipe's default encoding cannot, so every tool runs in UTF-8 mode.
+UTF8 = {"PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
 DEMO_DAY = datetime.date(2026, 10, 19)
 DEMO_END = datetime.time(10, 45)           # the saved charts run to 10:05 (TSLA to 10:43)
 DEMO_SCAN_END = "10:05"
@@ -251,13 +253,14 @@ class App:
 
     def run(self, tool, args, want_json=True, timeout=180, env=None):
         cmd = [sys.executable, TOOLS[tool]] + [str(a) for a in args]
-        e = dict(os.environ)
+        e = dict(os.environ, **UTF8)
         if self.demo:
             e["TRADER_DATA_SOURCE"] = "yahoo"      # demo data is offline anyway: never touch FYERS
         if env:
             e.update(env)
         try:
-            p = subprocess.run(cmd, cwd=self.workdir, capture_output=True, text=True, timeout=timeout, env=e)
+            p = subprocess.run(cmd, cwd=self.workdir, capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", timeout=timeout, env=e)
         except subprocess.TimeoutExpired:
             raise ToolError("%s took longer than %ds" % (os.path.basename(TOOLS[tool]), timeout))
         out, err = p.stdout.strip(), p.stderr.strip()
@@ -481,7 +484,9 @@ class App:
         e = dict(os.environ)
         if self.demo:
             e["TRADER_DATA_SOURCE"] = "yahoo"
-        p = subprocess.Popen(cmd, cwd=self.workdir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=e)
+        e.update(UTF8)
+        p = subprocess.Popen(cmd, cwd=self.workdir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                             encoding="utf-8", errors="replace", env=e)
         err = []
 
         def pump():
@@ -1087,9 +1092,10 @@ def main(argv=None):
         srv = ThreadingHTTPServer(("127.0.0.1", a.port), Handler)
     except OSError as e:
         print("Port %d is already in use: the dashboard is probably still running in another Terminal "
-              "window. Press Control+C there, or stop it with:\n    lsof -ti :%d | xargs kill\n"
+              "window. Press Control+C there, or stop it with:\n    %s\n"
               "then start it again. (Keep port 8765: the FYERS login comes back to that address.)\n(%s)"
-              % (a.port, a.port, e))
+              % (a.port, ("for /f \"tokens=5\" %%p in ('netstat -ano ^| findstr :%d') do taskkill /PID %%p /F"
+                          % a.port) if os.name == "nt" else "lsof -ti :%d | xargs kill" % a.port, e))
         return 1
     srv.daemon_threads = True
     url = "http://127.0.0.1:%d/" % a.port

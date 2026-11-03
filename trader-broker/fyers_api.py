@@ -256,6 +256,40 @@ def _wait(calls, now, per_minute=None, per_second=None):
     return wait, calls
 
 
+def _lock(fh):
+    """An exclusive lock on an open file, shared by every program: fcntl on Mac and Linux,
+    msvcrt on Windows (which retries for about 10 seconds, then tries again)."""
+    try:
+        import fcntl
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        return
+    except ImportError:
+        pass
+    import msvcrt
+    fh.seek(0)
+    while True:
+        try:
+            msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+            return
+        except OSError:
+            continue
+
+
+def _unlock(fh):
+    try:
+        import fcntl
+        fcntl.flock(fh, fcntl.LOCK_UN)
+        return
+    except ImportError:
+        pass
+    import msvcrt
+    fh.seek(0)
+    try:
+        msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+    except OSError:
+        pass
+
+
 def _pace():
     """Stay under your FYERS plan's limits (a second, a minute, a day), counted across every tool.
 
@@ -263,19 +297,15 @@ def _pace():
     programs, and FYERS blocks the API for the day after the third minute over the
     limit, so the count lives in trader/state/fyers_calls.json behind a file lock.
     Without a trader/state folder (or file locks), it is counted in this program only."""
-    try:
-        import fcntl
-    except ImportError:
-        fcntl = None
     folder = os.path.dirname(PACE_FILE)
-    if fcntl is None or not os.path.isdir(folder):
+    if not os.path.isdir(folder):
         wait, kept = _wait(_calls, time.time())
         if wait > 0:
             SLEEP(wait)
         _calls[:] = kept + [time.time()]
         return
     with open(PACE_FILE + ".lock", "a+") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        _lock(lock)
         try:
             doc = _read(PACE_FILE) or {}
             if isinstance(doc, list):                       # the older shape: just the times
@@ -296,7 +326,7 @@ def _pace():
                 json.dump({"day": day, "count": count + 1, "plan": plan_name(), "calls": calls}, fh)
             os.replace(tmp, PACE_FILE)
         finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
+            _unlock(lock)
 
 
 def request(method, url, body=None, auth=None, data_call=False, timeout=20):

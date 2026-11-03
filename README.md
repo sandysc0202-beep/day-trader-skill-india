@@ -71,7 +71,9 @@ Project-local instead of global: copy the same folders into your repo's
 top of a chat and it runs as a mode. You lose the Python tools, but the method
 works.
 
-The tools need Python 3.8 or newer. Nothing to pip install. Start with
+The tools need Python 3.8 or newer. Nothing to pip install. On Windows, use
+`python` (or `py`) where these notes say `python3`, and backslashes in paths
+if you like: `python dashboard\server.py`. Start with
 `trader-scanner/scan.py universe`: it writes `trader/universe.txt`, NSE's own
 list of symbols and company names, which the news and analyst skills use to
 match NSE filings to your symbols.

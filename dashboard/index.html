@@ -87,6 +87,9 @@ td, th { overflow-wrap: anywhere; }
 .ph { flex-wrap: wrap; row-gap: 8px; }
 .ph h2 { min-width: 0; flex-wrap: wrap; }
 .ph .row { flex-wrap: wrap; justify-content: flex-end; }
+.trailbox { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; letter-spacing: .08em; color: var(--text); cursor: pointer; text-transform: uppercase; }
+.trailbox input { width: 15px; height: 15px; accent-color: var(--amber); }
+.trailtag { font-family: var(--mono); font-size: 9.5px; color: var(--amber); }
 .more { width: 100%; justify-content: center; margin-top: 6px; }
 .ph h2 { margin: 0; font-size: 11px; letter-spacing: .22em; text-transform: uppercase; font-weight: 600; color: var(--muted); display: flex; align-items: center; gap: 8px; }
 .ph h2 .idx { color: var(--cyan); font-family: var(--mono); font-size: 10px; }
@@ -344,7 +347,9 @@ footer { position: relative; z-index: 2; text-align: center; color: var(--dim); 
     </section>
     <div class="duo">
       <section class="panel">
-        <div class="ph"><h2><span class="idx">06</span>Positions &amp; Limits</h2><span class="muted mono" id="cashLine"></span></div>
+        <div class="ph"><h2><span class="idx">06</span>Positions &amp; Limits</h2>
+          <div class="row"><label class="trailbox" title="Breakeven at 1R, then each completed 5-minute candle's low. The stop only moves up; the target stays.">
+            <input type="checkbox" id="trailOn"> Trailing stop</label><span class="muted mono" id="cashLine"></span></div></div>
         <div class="pb" id="posBox"><div class="empty">No open positions.</div></div>
       </section>
       <section class="panel">
@@ -697,6 +702,11 @@ function renderChart() {
     lines.push({ price: plan.entry, color: "#00e5ff", label: "ENTRY" }, { price: plan.stop, color: "#ff3d71", label: "STOP", dash: [6, 4] }, { price: plan.target, color: "#2bff9a", label: "TGT", dash: [6, 4] });
     legend.push('<span><i style="background:#00e5ff"></i>Entry</span><span><i style="background:#ff3d71"></i>Stop</span><span><i style="background:#2bff9a"></i>Target</span>');
   }
+  const pos = S.book && S.book.positions.find((x) => x.symbol === c.symbol && x.trail);
+  if (pos && pos.trail.stop > pos.trail.initial) {
+    lines.push({ price: pos.trail.stop, color: "#ffb020", label: "TRAIL", dash: [3, 3] });
+    legend.push('<span><i style="background:#ffb020"></i>Trailing stop</span>');
+  }
   let bands = null;
   if (mine(tm && tm.plan) && tm.mc && tm.mc.bands && c.bars.length) {
     const day0 = c.bars[0].t; const eb = (tm.plan.entry_bar || 0);
@@ -836,6 +846,7 @@ function confirmLive(t) {
 /* ====================================================================== bottom: positions, news, journal */
 function renderBook() {
   const b = S.book; if (!b) return;
+  if (S.status && S.status.config) $("trailOn").checked = !!S.status.config.trailing_stop;
   $("dayPnl").textContent = inr(b.day_pnl); $("dayPnl").className = "val mono " + cls(b.day_pnl);
   $("cashLine").textContent = "cash " + inr(b.cash, 0);
   const L = b.limits || {};
@@ -847,10 +858,12 @@ function renderBook() {
     html += `<table style="margin-top:10px"><thead><tr><th>Symbol</th><th>Qty</th><th>Avg</th><th>LTP</th><th>P&amp;L</th><th></th></tr></thead><tbody>` +
       b.positions.map((p) => {
         let prog = "";
+        const tr = p.trail;
+        const trailInfo = tr ? `<div class="trailtag">STOP ${fmt(tr.stop)}${tr.stop > tr.initial ? " ↑ from " + fmt(tr.initial) : ""}${tr.breakeven ? " · breakeven ✓" : " · breakeven at 1R"}</div>${tr.note ? `<div class="note amber">⚠ ${esc(tr.note)}</div>` : ""}` : "";
         if (p.stop && p.target && p.price) { const f = Math.max(0, Math.min(1, (p.price - p.stop) / (p.target - p.stop)));
           prog = `<div class="bar" style="margin-top:4px;width:110px"><i style="width:${f * 100}%;background:linear-gradient(90deg,#ff3d71,#ffb020,#2bff9a)"></i></div><div class="muted" style="font-size:9.5px">stop ${fmt(p.stop)} → tgt ${fmt(p.target)}</div>`; }
         return `<tr><td>${esc(p.symbol)}</td><td>${p.shares}</td><td>${fmt(p.avg)}</td><td>${fmt(p.price)}</td>
-          <td class="${cls(p.pnl)}">${inr(p.pnl)}<br><span style="font-size:10px">${pct(p.pnl_pct)}</span>${prog}</td>
+          <td class="${cls(p.pnl)}">${inr(p.pnl)}<br><span style="font-size:10px">${pct(p.pnl_pct)}</span>${prog}${trailInfo}</td>
           <td style="text-align:right">${!S.status.paper ? `<button class="sm" data-protect="${esc(p.symbol)}">STOP-LOSS</button> ` : ""}<button class="sm danger" data-flatten="${esc(p.symbol)}">FLATTEN</button></td></tr>`;
       }).join("") + "</tbody></table>";
   } else html += '<div class="empty" style="margin-top:8px">No open positions.</div>';
@@ -1020,13 +1033,14 @@ function backtestModal() {
       ${demo ? "" : `<select id="btDays" aria-label="Period"><option value="365">last year</option><option value="180">6 months</option><option value="90">3 months</option></select>`}
       <select id="btTarget" aria-label="Target"><option value="2R">target 2R</option><option value="1.5R">1.5R</option><option value="1R">1R</option><option value="3R">3R</option></select>
       <select id="btStop" aria-label="Stop"><option value="or-mid">stop: OR midpoint</option><option value="or-low">stop: OR low</option></select>
+      <label class="trailbox"><input type="checkbox" id="btTrail"> with trailing stop</label>
       <button class="hot" id="btRun">RUN BACKTEST</button></div>
     <div id="btOut"></div>`);
   $("btRun").onclick = () => busy("bt", $("btRun"), async () => {
     $("btOut").innerHTML = '<div class="empty"><span class="spin"></span> Replaying the sessions… a year of a few dozen stocks takes a few minutes the first time (the bars are cached after).</div>';
     try {
       const r = await api("/api/backtest", { symbols: demo ? "" : $("btSyms").value, days: demo ? 90 : $("btDays").value,
-        target: $("btTarget").value, stop: $("btStop").value });
+        target: $("btTarget").value, stop: $("btStop").value, trail: $("btTrail").checked });
       renderBacktest(r);
     } catch (e) { $("btOut").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
   });
@@ -1036,7 +1050,7 @@ function renderBacktest(r) {
   const s = r.summary || {}, p = r.params || {};
   if (!s.trades) { $("btOut").innerHTML = '<div class="empty">No trades: no breakout passed the rules in this window.</div>'; return; }
   const src = Object.entries(r.sources || {}).map(([k, v]) => `${k === "fyers" ? "FYERS" : k === "yahoo" ? "Yahoo" : "saved"} ${v}`).join(", ");
-  let h = `<div class="note" style="margin-bottom:8px">${esc(p.from)} → ${esc(p.to)} · ${p.symbols} symbol${p.symbols === 1 ? "" : "s"} · ${r.sessions} sessions · data: ${esc(src)} · target ${p.target_r}R · ${esc(p.stop)} · FYERS ${esc(p.plan)}</div>
+  let h = `<div class="note" style="margin-bottom:8px">${esc(p.from)} → ${esc(p.to)} · ${p.symbols} symbol${p.symbols === 1 ? "" : "s"} · ${r.sessions} sessions · data: ${esc(src)} · target ${p.target_r}R · ${esc(p.stop)}${p.trail ? " + trailing stop" : ""} · FYERS ${esc(p.plan)}</div>
     <div class="stat3" style="grid-template-columns:repeat(4,1fr)">
       <div class="stat"><div class="l">Trades</div><div class="v">${s.trades}</div></div>
       <div class="stat"><div class="l">Win rate</div><div class="v">${s.win_rate}%</div></div>
@@ -1081,6 +1095,15 @@ async function boot() {
   $("btnAnalyze").onclick = (e) => analyze(e.currentTarget);
   $("btnResults").onclick = resultsModal;
   $("btnBacktest").onclick = backtestModal;
+  $("trailOn").onchange = async (e) => {
+    try {
+      S.status = await api("/api/settings", { trailing_stop: e.target.checked });
+      toast(e.target.checked ? "Trailing stop ON: breakeven at 1R, then each completed 5-minute candle's low. " +
+        (S.status.paper ? "Paper: the exit is recorded when the price reaches the stop." : "Live: your STOP-LOSS order at FYERS is moved up, and FYERS sells.")
+        : "Trailing stop OFF: stops stay where they were set.", e.target.checked ? "good" : "warn", 9000);
+      refreshBook();
+    } catch (err) { toast(err.message, "bad"); e.target.checked = !e.target.checked; }
+  };
   $("btnNews").onclick = refreshNews;
   $("btnFyers").onclick = fyersModal;
   $("mClose").onclick = closeModal;

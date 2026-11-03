@@ -18,6 +18,7 @@
   "broker": "fyers",
   "fyers_plan": "standard",
   "fyers_only": false,
+  "trailing_stop": false,
   "paper": true,
   "blocked": [],
   "allow_options": false,

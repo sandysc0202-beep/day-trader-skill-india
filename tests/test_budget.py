@@ -25,7 +25,7 @@ CONTRACT_CFG = {
     "max_loss_per_trade_inr": 500, "max_daily_loss_inr": 1500, "max_trades_per_day": 3, "max_orders_per_day": 10,
     "min_reward_risk": 1.0, "require_stop": True,
     "no_entries_before": "09:30", "no_entries_after": "14:45", "flat_by": "15:00",
-    "fractional": False, "tick_size": None, "broker": "fyers", "fyers_plan": "standard", "fyers_only": False, "paper": True, "blocked": [],
+    "fractional": False, "tick_size": None, "broker": "fyers", "fyers_plan": "standard", "fyers_only": False, "trailing_stop": False, "paper": True, "blocked": [],
     "allow_options": False, "allow_margin": False, "allow_short": False, "pdt_guard": False,
 }
 # v1's rules, for the weights mode tests (fractional: a rupee split, no orders without prices)

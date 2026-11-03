@@ -27,6 +27,7 @@ python3 "${CLAUDE_SKILL_DIR}/backtest.py" run --symbols RELIANCE,HDFCBANK,ICICIB
 python3 "${CLAUDE_SKILL_DIR}/backtest.py" run --watchlist trader/favorites.txt --days 180
 python3 "${CLAUDE_SKILL_DIR}/backtest.py" run --universe trader/universe.txt --limit 200    # FYERS Prime
 python3 "${CLAUDE_SKILL_DIR}/backtest.py" run --symbols SBIN --target 1.5R --stop or-low
+python3 "${CLAUDE_SKILL_DIR}/backtest.py" run --watchlist trader/favorites.txt --trail   # with the trailing stop
 python3 "${CLAUDE_SKILL_DIR}/backtest.py" show
 ```
 
@@ -77,7 +78,8 @@ Exactly the live pack's, so the result is about the strategy you will trade:
    the worst losing streak and the max drawdown (can they live through
    that?), and the months (one good month carrying the year is a warning).
 4. Change one thing at a time to compare (`--target 1.5R`, `--stop or-low`,
-   `--min-volume-x 1.5`), and say that trying many settings and keeping the
+   `--min-volume-x 1.5`, `--trail` for the trailing stop: breakeven at 1R,
+   then each completed candle's low, exits marked `trail`), and say that trying many settings and keeping the
    best one fits the past, not the future.
 
 ## What it never does

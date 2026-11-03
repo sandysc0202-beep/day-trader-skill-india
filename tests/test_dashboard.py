@@ -163,7 +163,31 @@ if __name__ == "__main__":
         self.assertIn("TSLA", [h["symbol"] for h in st["result"]["hits"]])
         self.assertIsNotNone(st["seconds"])
 
+    def test_9_trailing_stop_switch_and_positions(self):
+        self.post("/api/demo/reset")
+        code, st = self.post("/api/settings", {"trailing_stop": True})
+        self.assertTrue(st["config"]["trailing_stop"])
+        self.post("/api/clock", {"time": "10:10"})
+        for p, body in (("/api/entry", {"symbol": "TSLA"}), ("/api/plan", {}), ("/api/size", {}), ("/api/risk", {})):
+            self.post(p, body)
+        self.post("/api/approve", {"index": 1, "reply": "yes"})
+        self.post("/api/execute", {"index": 1})
+        self.post("/api/clock", {"time": "10:40"})
+        doc = self.app.trail_once()
+        self.assertIn("TSLA", doc)
+        self.assertGreaterEqual(doc["TSLA"]["stop"], doc["TSLA"]["initial_stop"])
+        code, book = self.call("GET", "/api/book")
+        pos = [p for p in book["positions"] if p["symbol"] == "TSLA"]
+        if pos:                                                     # still open: its trailing stop is shown
+            self.assertEqual(pos[0]["trail"]["stop"], doc["TSLA"]["stop"])
+        code, st = self.post("/api/settings", {"trailing_stop": False})
+        self.assertFalse(st["config"]["trailing_stop"])
+        self.assertEqual(self.app.trail_once(), {})
+
     def test_7_backtest(self):
+        code, t = self.post("/api/backtest", {"target": "2R", "trail": True})
+        self.assertTrue(t["params"]["trail"])
+        self.assertIn("trail", t["summary"]["outcomes"])
         code, r = self.post("/api/backtest", {"target": "2R"})
         self.assertEqual(code, 200)
         self.assertEqual((r["summary"]["trades"], r["summary"]["worst_losing_streak"]), (33, 7))

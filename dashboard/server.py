@@ -82,6 +82,8 @@ def load_module(folder, name):
 
 
 alerts_mod = load_module("trader-alerts", "alerts")
+sys.path.insert(0, os.path.join(ROOT, "trader-broker"))
+import trail as trail_mod  # noqa: E402  (trader-broker/trail.py: the trailing stop)
 scan_mod = load_module("trader-scanner", "scan")
 fyers = load_module("trader-broker", "fyers_api")
 
@@ -183,6 +185,39 @@ class App:
         self.lock = threading.Lock()
         self._wall = None
         self._first_run()
+        self.trail_log = []
+        threading.Thread(target=self._trail_loop, daemon=True).start()
+
+    # ------------------------------------------------ the trailing stop
+
+    def trail_once(self):
+        """One look at every open position (trader-broker/trail.py), when the config turns it on."""
+        cfg = self.config()
+        if not trail_mod.enabled(cfg):
+            return {}
+        with self.lock:
+            return trail_mod.check(
+                cfg, self.clock.utc(),
+                bars_for=lambda s: [b for b in self.chart(s)["bars"]],
+                price_for=lambda s: self.chart(s)["price"],
+                log=lambda m: self.trail_log.append(m) or self.trail_log.__delitem__(slice(0, -50)))
+
+    def _trail_loop(self):
+        while True:
+            try:
+                self.trail_once()
+            except Exception as e:                   # never stop the loop: say it and try again
+                self.trail_log.append("trail: %s" % e)
+            time.sleep(1.0 if self.demo else 5.0)
+
+    def settings(self, body):
+        """The on/off switches the dashboard can set in trader/config.json."""
+        path = os.path.join("trader", "config.json")
+        c = read_json(path, {}) or {}
+        if "trailing_stop" in body:
+            c["trailing_stop"] = bool(body["trailing_stop"])
+        write_json(path, c)
+        return self.status()
 
     # ------------------------------------------------ first run
 
@@ -277,7 +312,8 @@ class App:
                       "end": DEMO_END.strftime("%H:%M")} if self.demo else None,
             "config": {k: cfg.get(k) for k in ("budget", "max_loss_per_trade_inr", "max_daily_loss_inr",
                                                "max_trades_per_day", "no_entries_before", "no_entries_after",
-                                               "flat_by", "min_reward_risk", "paper", "broker", "fyers_plan")},
+                                               "flat_by", "min_reward_risk", "paper", "broker", "fyers_plan",
+                                               "trailing_stop")},
             "favorites": self.favorites(), "workdir": self.workdir,
             "plan": fyers.plan_name(), "panels": dict(self.panels),
             "fyers_only": (not self.demo) and fyers.fyers_only(),
@@ -682,6 +718,8 @@ class App:
         for k, flag in (("target", "--target"), ("stop", "--stop")):
             if body.get(k):
                 args += [flag, str(body[k])]
+        if body.get("trail"):
+            args += ["--trail"]
         if self.demo:
             args += ["--symbols", "TSLA", "--offline", DEMO["tm"]["TSLA"], "--to", DEMO_DAY.isoformat(), "--days", "90"]
         else:
@@ -715,6 +753,7 @@ class App:
                                   "avg": round(cost / shares, 2) if shares else None, "cost": round(cost, 2)})
                 syms.append(p.get("ticker"))
         q = self.quotes(syms) if syms else {}
+        trails = trail_mod.load()
         unreal = 0.0
         for p in positions:
             price = (q.get(p["symbol"]) or {}).get("price")
@@ -725,6 +764,12 @@ class App:
                 unreal += p["pnl"]
             if str(plan.get("symbol", "")).upper() == p["symbol"]:
                 p["stop"], p["target"], p["flat_by"] = plan.get("stop"), plan.get("target"), plan.get("flat_by")
+            tr = trails.get(p["symbol"])
+            if tr and not tr.get("exited") and trail_mod.enabled(cfg):
+                p["trail"] = {"stop": tr["stop"], "initial": tr["initial_stop"], "breakeven": tr["breakeven"],
+                              "moves": len(tr.get("moves", [])), "note": tr.get("note"),
+                              "last": (tr.get("moves") or [{}])[-1].get("why")}
+                p["stop"] = tr["stop"]
         trades = self.journal(state)
         realized_today = round(sum(t["pnl"] for t in trades if t["date"] == today), 2)
         entries_today = [r for r in state.get("orders", []) if str(r.get("date")) == today
@@ -982,6 +1027,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, app.cancel(str(b.get("broker_id", ""))))
             if u.path == "/api/favorites":
                 return self._send(200, app.favorites_set(b.get("symbols", [])))
+            if u.path == "/api/settings":
+                return self._send(200, app.settings(b))
             if u.path == "/api/fyers/setup":
                 return self._send(200, app.fyers_setup(b))
             if u.path == "/api/clock":

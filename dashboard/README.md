@@ -55,6 +55,15 @@ The same gates as the skills, every time:
    also type the symbol, and then `ticket.py place` sends exactly the body
    shown to FYERS.
 
+The **Trailing stop** tickbox on the Positions panel (off by default) moves
+each open position's stop up: to breakeven when the price reaches 1R, then to
+each completed 5-minute candle's low. Each position shows its stop now
+(`STOP 362.10 ↑ from 358.30 · breakeven ✓`) and the chart draws it as an
+amber TRAIL line. Paper: the exit is recorded when the price reaches the
+stop. Live: your STOP-LOSS order at FYERS is moved up and FYERS sells. It
+runs while the dashboard runs. The BACKTEST window has a "with trailing stop"
+box to compare.
+
 Positions get **FLATTEN** (a market sell ticket, through the risk check and
 your yes again) and, live, **STOP-LOSS** (the SL-M sell from `ticket.py
 protect`). Before a live flatten, cancel the open stop-loss (`ticket.py

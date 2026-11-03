@@ -354,20 +354,30 @@ def simulate_day(sym, day, bars, cfg, rules):
     if qty <= 0:
         return {"skip": "too big for one share at your max loss"}
     exit_px, outcome, exit_bar = None, None, None
+    cur, breakeven = stop, False          # the stop now: the trailing stop moves it up (--trail)
     for b in bars[trig + 1:]:
         if b["m"] + BAR > flat:
             break
         exit_bar = b
-        if b["o"] <= stop:
-            exit_px, outcome = b["o"] * (1 - slip), "stop"
-        elif b["l"] <= stop:
-            exit_px, outcome = stop * (1 - slip), "stop"
+        hit = "trail" if cur > stop else "stop"
+        if b["o"] <= cur:
+            exit_px, outcome = b["o"] * (1 - slip), hit
+        elif b["l"] <= cur:
+            exit_px, outcome = cur * (1 - slip), hit
         elif b["o"] >= target:
             exit_px, outcome = b["o"], "target"
         elif b["h"] >= target:
             exit_px, outcome = target, "target"
         if outcome:
             break
+        if rules.get("trail"):
+            # the candle has closed: trader-broker/trail.py's rules. 1R moves the stop to breakeven;
+            # after that, each completed candle's low raises it; it never goes down.
+            if not breakeven:
+                if b["h"] >= entry + risk:
+                    breakeven, cur = True, max(cur, entry)
+            else:
+                cur = max(cur, to_tick(b["l"], tick, up=False))
     if not outcome:
         if exit_bar is None:
             return {"skip": "no bar left before flat-by"}
@@ -381,7 +391,7 @@ def simulate_day(sym, day, bars, cfg, rules):
     held = (exit_bar["m"] + BAR - (tb["m"] + BAR)) if exit_bar else 0
     return {"symbol": sym, "date": day.isoformat(), "time": "%02d:%02d" % divmod(tb["m"] + BAR, 60),
             "or_high": round(hi, 2), "or_low": round(lo, 2), "entry": entry, "stop": stop, "target": target,
-            "qty": qty, "exit": exit_px, "outcome": outcome,
+            "qty": qty, "exit": exit_px, "outcome": outcome, "final_stop": round(cur, 2),
             "exit_time": "%02d:%02d" % divmod((exit_bar["m"] + BAR) if exit_bar else tb["m"] + BAR, 60),
             "minutes": held, "max_loss": round(planned, 2), "gross": gross, "charges": ch["total"], "net": net,
             "r": round(gross / planned, 2), "r_net": round(net / planned, 2), "_m": tb["m"]}
@@ -510,9 +520,11 @@ def render(doc):
            % (p["from"], p["to"], p["symbols"], "" if p["symbols"] == 1 else "s", doc["sessions"],
               ", ".join("%s for %d symbol%s" % (src.get(k, k), v, "" if v == 1 else "s")
                         for k, v in sorted(doc["sources"].items())) or "none"),
-           "Rules: %d-minute range, entries %s to %s, stop %s, target %sR, flat by %s, max loss %s a trade, "
+           "Rules: %d-minute range, entries %s to %s, stop %s%s, target %sR, flat by %s, max loss %s a trade, "
            "%d trades and %s a day, slippage %.3f%%, FYERS %s brokerage."
-           % (p["or_minutes"], p["no_entries_before"], p["no_entries_after"], p["stop"], _r(p["target_r"]),
+           % (p["or_minutes"], p["no_entries_before"], p["no_entries_after"], p["stop"],
+              " with the trailing stop (breakeven at 1R, then each candle's low)" if p.get("trail") else "",
+              _r(p["target_r"]),
               p["flat_by"], money(p["max_loss_per_trade_inr"]), p["max_trades_per_day"],
               money(p["max_daily_loss_inr"]), 100 * p["slippage"], p["plan"]), ""]
     if not s.get("trades"):
@@ -600,7 +612,8 @@ def cmd_run(a):
         raise BacktestError("--from is after --to")
     plan = (a.plan or cfg.get("fyers_plan") or "standard").lower()
     rules = {"or_minutes": a.or_minutes, "stop": a.stop, "target_r": parse_target(a.target),
-             "slippage": a.slippage_pct / 100.0, "min_volume_x": a.min_volume_x, "prime": plan == "prime"}
+             "slippage": a.slippage_pct / 100.0, "min_volume_x": a.min_volume_x, "prime": plan == "prime",
+             "trail": bool(a.trail)}
     symbols = read_symbols(a)
     prog = None if a.json else (lambda m: print(m, file=sys.stderr))
     if prog:
@@ -611,7 +624,7 @@ def cmd_run(a):
                                "is a shorter test than asked. Log in to FYERS for a year.")
     params = {"from": start.isoformat(), "to": end.isoformat(), "symbols": len(symbols),
               "or_minutes": a.or_minutes, "stop": a.stop, "target_r": rules["target_r"],
-              "slippage": rules["slippage"], "plan": plan, "min_volume_x": a.min_volume_x}
+              "slippage": rules["slippage"], "plan": plan, "min_volume_x": a.min_volume_x, "trail": rules["trail"]}
     params.update({k: cfg[k] for k in ("no_entries_before", "no_entries_after", "flat_by", "budget",
                                        "max_loss_per_trade_inr", "max_daily_loss_inr", "max_trades_per_day",
                                        "max_order_inr")})
@@ -664,6 +677,8 @@ def main(argv=None):
     p.add_argument("--target", default="2R")
     p.add_argument("--slippage-pct", type=float, default=0.02, help="against you, per fill (default 0.02)")
     p.add_argument("--min-volume-x", type=float, help="breakout bar volume vs the range bars' average")
+    p.add_argument("--trail", action="store_true",
+                   help="the trailing stop: breakeven at 1R, then each completed candle's low (trader-broker/trail.py)")
     p.add_argument("--no-entries-after", help="HH:MM (default: config, 14:45)")
     p.add_argument("--flat-by", help="HH:MM (default: config, 15:00)")
     p.add_argument("--budget", type=float)

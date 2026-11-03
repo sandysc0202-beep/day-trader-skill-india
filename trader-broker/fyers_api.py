@@ -455,6 +455,14 @@ def cancel_order(order_id):
     return {"id": str(doc.get("id") or order_id), "message": doc.get("message", "")}
 
 
+def modify_stop(order_id, stop_price):
+    """Move an open SL-M order's trigger (the trailing stop raising the stop-loss at FYERS).
+    Only a pending order can be modified; FYERS answers with an error otherwise."""
+    body = {"id": str(order_id), "type": ORDER_TYPES["stop"], "stopPrice": round(float(stop_price), 2)}
+    doc = request("PATCH", API + "/orders/sync", body, auth=auth_header())
+    return {"id": str(doc.get("id") or order_id), "message": doc.get("message", "")}
+
+
 # ---------------------------------------------------------------- data
 
 QUOTES_MODE = os.path.join("trader", "state", "fyers_quotes.json")

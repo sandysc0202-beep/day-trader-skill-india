@@ -172,6 +172,28 @@ means `"paper": false` in the user's own config, set by the user.
    static IP), it is recorded as failed with FYERS' reason. A failed order is
    not retried without a new check and a new yes.
 
+## The trailing stop (optional, off by default)
+
+`"trailing_stop": true` in `trader/config.json` (or the **Trailing stop**
+tickbox on the dashboard's Positions panel) turns on `trail.py`, long trades
+only:
+
+1. When the price reaches entry + 1R, the stop moves to the entry price.
+2. After that, at each completed 5-minute candle, the stop rises to that
+   candle's low if it is higher (on NSE's tick). The 1R candle itself does
+   not count.
+3. The stop only ever moves up. 4. The target stays as it is.
+
+Paper: when the price reaches the stop, the exit is recorded as a paper sell
+at the stop (`trail-exit` in the log). Live: the SL-M stop-loss order at
+FYERS from `protect` is moved up (FYERS' modify order), so FYERS does the
+selling, even with this computer asleep, and the fill is recorded when FYERS
+reports it. Without that order at FYERS there is nothing to move: run
+`protect` first. The app never sends a second sell for the same shares. The
+dashboard checks every 5 seconds while it runs; without it, `python3
+trail.py check` does one pass and `trail.py show` lists every move. Compare
+it on past data first: `/trader-backtest` with `--trail`.
+
 ## Steps: while it is open, and out by the close
 
 1. **The stop-loss, right after the entry fills:** `ticket.py protect

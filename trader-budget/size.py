@@ -81,6 +81,7 @@ DEFAULTS = {
     "broker": "fyers",
     "fyers_plan": "standard",   # or "prime": how fast the pack may call FYERS (fyers_api.py)
     "fyers_only": False,        # true: prices from FYERS or an error, never Yahoo's delayed ones
+    "trailing_stop": False,     # true: trader-broker/trail.py moves the stop up (breakeven at 1R, then candle lows)
     "paper": True,
     "blocked": [],
     "allow_options": False,

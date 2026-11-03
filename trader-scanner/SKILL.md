@@ -139,8 +139,12 @@ left out as unusable.
   the free standard plan (50 calls a minute) a FYERS scan takes up to 40
   symbols and a bigger one runs on Yahoo, with a note. With
   `"fyers_plan": "prime"` in the config, the whole market runs on FYERS at up
-  to 450 requests a minute (about 5 minutes for 2,000 symbols). If FYERS
-  fails mid-scan, Yahoo answers and the scan says so.
+  to 450 requests a minute. A live FYERS scan first reads today's prices (one
+  request per 50 symbols) and skips every stock whose high is not above its
+  open (it cannot have closed above its opening range), then reads the rest
+  of the charts several at a time: the Nifty 500 in about a minute, the
+  whole market in a few. If FYERS fails mid-scan, Yahoo answers and the scan
+  says so.
 - Partial results are said as partial: "Fetched 1,980 of 2,050 charts (70
   failed or had no data)". Never round a partial scan up to "the whole market".
 - NSE's 2026 trading holidays are in the calendar (NSE has no half days). Add

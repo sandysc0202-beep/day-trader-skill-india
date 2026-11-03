@@ -602,25 +602,51 @@ def chart_doc(sym, rng, interval, now_utc=None, period=None, quote=None):
 SPARK_LIMIT = PLANS["standard"]["scan_limit"]   # the standard plan's; scan_limit() gives your plan's
 
 
+def charts(symbols, rng, interval, now_utc=None, quote_map=None, workers=None, progress=None):
+    """Many symbols' charts at once: up to `workers` requests in flight (default: the plan's
+    calls a second, at most 8), all through the shared pacer, so a big scan runs at the plan's
+    speed instead of one request after another. -> ({SYM: chart result}, {SYM: why it failed})."""
+    import concurrent.futures as cf
+    workers = workers or max(1, min(8, plan()["per_second"]))
+    qm = quote_map or {}
+    out, failed = {}, {}
+
+    def one(sym):
+        return chart_doc(sym, rng, interval, now_utc, quote=qm.get(plain_symbol(fyers_symbol(sym)), {}))
+
+    with cf.ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(one, s): s for s in symbols}
+        try:
+            for n, f in enumerate(cf.as_completed(futs), 1):
+                sym = futs[f]
+                try:
+                    r = f.result()["chart"]["result"][0]
+                    if r["timestamp"]:
+                        out[sym] = r
+                    else:
+                        failed[sym] = "no bars from FYERS"
+                except FyersError as e:
+                    if "limit" in str(e) or "token" in str(e) or "logged in" in str(e):
+                        raise
+                    failed[sym] = str(e)
+                if progress and (n % 50 == 0 or n == len(symbols)):
+                    progress(n, len(symbols))
+        except FyersError:
+            for f in futs:
+                f.cancel()
+            raise
+    return out, failed
+
+
 def spark_doc(symbols, rng, interval, now_utc=None):
-    """Several symbols as Yahoo's v7 spark answer: one bulk quote request, then one history
-    request per symbol. A symbol FYERS has no data for is simply left out, as Yahoo does."""
+    """Several symbols as Yahoo's v7 spark answer: one quote request, then the charts in
+    parallel. A symbol FYERS has no data for is simply left out, as Yahoo does."""
     if len(symbols) > scan_limit():
         raise FyersError("FYERS' %s plan allows %d data calls a minute: scan up to %d symbols with FYERS "
                          "(a watchlist), or the whole market with Yahoo (TRADER_DATA_SOURCE=yahoo)"
                          % (plan_name(), plan()["per_minute"] + 5, scan_limit()))
-    qs = quotes(symbols)
-    out = []
-    for s in symbols:
-        try:
-            doc = chart_doc(s, rng, interval, now_utc, quote=qs.get(plain_symbol(fyers_symbol(s)), {}))
-        except FyersError as e:
-            if "limit" in str(e) or "token" in str(e):
-                raise
-            continue
-        r = doc["chart"]["result"][0]
-        if r["timestamp"]:
-            out.append({"symbol": r["meta"]["symbol"], "response": [r]})
+    got, _ = charts(symbols, rng, interval, now_utc, quote_map=quotes(symbols))
+    out = [{"symbol": got[s]["meta"]["symbol"], "response": [got[s]]} for s in symbols if s in got]
     return {"spark": {"result": out, "error": None}}
 
 

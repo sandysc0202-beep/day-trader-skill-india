@@ -179,6 +179,7 @@ class App:
         self.clock = Clock(demo)
         self.cache = {}
         self.panels = {}                       # which source each panel's data came from last
+        self.scan_job = None
         self.lock = threading.Lock()
         self._wall = None
         self._first_run()
@@ -438,25 +439,92 @@ class App:
 
     # ------------------------------------------------ the pipeline
 
-    def scan(self, scope="market"):
+    def run_streaming(self, tool, args, on_line, timeout=1800):
+        """Like run(), passing each stderr line (the tool's progress) to on_line as it comes."""
+        cmd = [sys.executable, TOOLS[tool]] + [str(a) for a in args]
+        e = dict(os.environ)
+        if self.demo:
+            e["TRADER_DATA_SOURCE"] = "yahoo"
+        p = subprocess.Popen(cmd, cwd=self.workdir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=e)
+        err = []
+
+        def pump():
+            for line in p.stderr:
+                line = line.rstrip()
+                if line:
+                    err.append(line)
+                    on_line(line)
+        t = threading.Thread(target=pump, daemon=True)
+        t.start()
+        timer = threading.Timer(timeout, p.kill)
+        timer.start()
+        try:
+            out = p.stdout.read().strip()
+            p.wait()
+        finally:
+            timer.cancel()
+        t.join(5)
+        data = None
+        if out:
+            try:
+                data = json.loads(out[out.find("{"):] if "{" in out else out)
+            except ValueError:
+                data = None
+        return {"code": p.returncode, "data": data, "text": out, "error": "\n".join(err)}
+
+    def scan_args(self, scope, say):
         if self.demo:
             now = min(self.clock.now_arg(), "%s %s" % (DEMO_DAY.isoformat(), DEMO_SCAN_END))
-            r = self.run("scan", ["orb", "--offline", DEMO["wall"], "--min-price", "0", "--min-volume", "0",
-                                  "--json", "--now", now])
-        else:
-            args = ["orb", "--json"]
-            env = None
-            if scope == "favorites":
-                fav = os.path.join("trader", "favorites.txt")
-                if not os.path.exists(fav):
-                    raise ToolError("add symbols to your favourites first")
-                args += ["--watchlist", fav]
-            else:
-                if not os.path.exists(os.path.join("trader", "universe.txt")):
-                    u = self.run("scan", ["universe"], want_json=False, timeout=300)
-                    if u["code"] != 0:
-                        raise ToolError("could not download NSE's equity list: " + (u["error"] or u["text"])[-300:])
-            r = self.run("scan", args, timeout=1800, env=env)  # the scanner picks FYERS or Yahoo by your plan
+            return ["orb", "--offline", DEMO["wall"], "--min-price", "0", "--min-volume", "0", "--json", "--now", now]
+        args = ["orb", "--json"]
+        if scope == "favorites":
+            fav = os.path.join("trader", "favorites.txt")
+            if not os.path.exists(fav):
+                raise ToolError("add symbols to your favourites first")
+            return args + ["--watchlist", fav]
+        lst = "nifty500" if scope == "nifty500" else "all"
+        path = os.path.join("trader", "universe-nifty500.txt" if lst == "nifty500" else "universe.txt")
+        if not os.path.exists(path):
+            say("Downloading NSE's %s list…" % ("Nifty 500" if lst == "nifty500" else "equity"))
+            u = self.run("scan", ["universe", "--list", lst, "--out", path], want_json=False, timeout=300)
+            if u["code"] != 0:
+                raise ToolError("could not download NSE's list: " + (u["error"] or u["text"])[-300:])
+        return args + ["--universe", path]
+
+    def scan_start(self, scope):
+        """Start a scan in the background; /api/scan/status follows it."""
+        with self.lock:
+            job = self.scan_job
+            if job and job.get("running"):
+                return dict(job, lines=job["lines"][-3:])
+            job = self.scan_job = {"running": True, "scope": scope, "started": time.time(), "lines": [],
+                                   "result": None, "error": None}
+
+        def say(line):
+            job["lines"].append(line)
+
+        def work():
+            try:
+                job["result"] = self.scan(scope, say)
+            except Exception as e:
+                job["error"] = str(e)
+            finally:
+                job["running"] = False
+                job["seconds"] = round(time.time() - job["started"], 1)
+        threading.Thread(target=work, daemon=True).start()
+        return {"running": True, "scope": scope}
+
+    def scan_status(self):
+        job = self.scan_job or {}
+        out = {k: job.get(k) for k in ("running", "scope", "result", "error", "seconds")}
+        out["lines"] = (job.get("lines") or [])[-3:]
+        out["elapsed"] = round(time.time() - job["started"], 1) if job.get("started") else None
+        return out
+
+    def scan(self, scope="market", say=None):
+        say = say or (lambda line: None)
+        args = self.scan_args(scope, say)
+        r = self.run_streaming("scan", args, say)   # the scanner picks FYERS or Yahoo by your plan
         if r["data"] is None:
             raise ToolError((r["error"] or r["text"] or "the scan failed")[-500:])
         self.panel("scan", "demo" if self.demo else self.tool_source(r, r["data"].get("source")))
@@ -830,6 +898,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, app.chart(q.get("symbol", ""), q.get("range", "1d"), q.get("interval", "5m")))
             if u.path == "/api/quotes":
                 return self._send(200, app.quotes(q.get("symbols", "").split(",")))
+            if u.path == "/api/scan/status":
+                return self._send(200, app.scan_status())
             if u.path == "/api/watchlist":
                 return self._send(200, read_json(os.path.join("trader", "watchlist.json"), {}) or {})
             if u.path == "/api/state":
@@ -883,7 +953,9 @@ class Handler(BaseHTTPRequestHandler):
         app = self.app
         try:
             if u.path == "/api/scan":
-                return self._send(200, app.scan(b.get("scope", "market")))
+                if b.get("wait"):
+                    return self._send(200, app.scan(b.get("scope", "nifty500")))
+                return self._send(200, app.scan_start(b.get("scope", "nifty500")))
             if u.path == "/api/entry":
                 return self._send(200, app.entry(str(b.get("symbol", "")).upper()))
             if u.path == "/api/plan":

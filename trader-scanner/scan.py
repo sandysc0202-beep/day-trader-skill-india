@@ -889,6 +889,43 @@ def cmd_universe(a):
     return 0 if kept else 1
 
 
+def fyers_orb_bars(fy, symbols, rng, live, a):
+    """Stage 1 on FYERS, fast: first one quote request per 50 symbols, keeping only those whose
+    high today is above today's open (a close above the opening range is impossible otherwise)
+    and at or above the price floor; then those charts, several requests at a time. FYERS' bars
+    carry real highs and lows, so there is no second, confirming stage.
+    -> ({SYM: series}, {SYM: why it failed})."""
+    keep, skipped = list(symbols), 0
+    if live:
+        progress(a, "Stage 1: today's prices for %s symbols (%d quote requests)..."
+                 % ("{:,}".format(len(symbols)), (len(symbols) + 49) // 50))
+        try:
+            q = fy.quotes(symbols)
+        except fy.FyersError as e:
+            raise ScanError("FYERS quotes: %s" % e)
+        keep = []
+        for s in symbols:
+            v = q.get(s.upper())
+            if not v or v.get("high") is None or v.get("open") is None:
+                keep.append(s)                  # no quote: let the chart decide
+            elif v["high"] > v["open"] and (v.get("price") or 0) >= a.min_price:
+                keep.append(s)
+        skipped = len(symbols) - len(keep)
+        progress(a, "  %s could not have broken out (high not above the open, or under the price floor); "
+                    "%s charts to read" % ("{:,}".format(skipped), "{:,}".format(len(keep))))
+    else:
+        q = {}
+    workers = max(1, min(8, fy.plan()["per_second"]))
+    progress(a, "Stage 2: %s 5-minute charts from FYERS, %d at a time (up to %d a minute)..."
+             % ("{:,}".format(len(keep)), workers, fy.plan()["per_minute"]))
+    try:
+        got, failed = fy.charts(keep, rng, "%dm" % BAR_MIN, quote_map=q, workers=workers,
+                                progress=lambda n, t: progress(a, "  stage 2: %d of %d charts" % (n, t)))
+    except fy.FyersError as e:
+        raise ScanError("FYERS: %s" % e)
+    return {s: series_from_result(r) for s, r in got.items()}, failed
+
+
 def pick_source(symbols, a):
     """'fyers' or 'yahoo' for this run. FYERS gives one symbol per history call and its free
     plan allows 50 calls a minute and 5,000 a day, so a list longer than a watchlist goes to
@@ -1003,6 +1040,9 @@ def cmd_orb(a):
         if (today - day).days > 6:
             raise ScanError("Yahoo's free 5-minute history is short: replay %s with --offline" % day.isoformat())
         rng = "1d" if day == today else "5d"
+    if not a.offline and source == "fyers":
+        data, failed = fyers_orb_bars(fyers_bridge(), symbols, rng, day == today, a)
+    elif not a.offline:
         progress(a, "Stage 1: 5-minute closes for %s symbols (%d spark requests)..."
                  % ("{:,}".format(len(symbols)), (len(symbols) + SPARK_MAX - 1) // SPARK_MAX))
         data, failed = fetch_spark(symbols, rng, "%dm" % BAR_MIN, a.pause, a)

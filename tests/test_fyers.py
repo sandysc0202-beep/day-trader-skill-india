@@ -305,6 +305,58 @@ class Bridge(Base):
             scan.pick_source(["S%d" % i for i in range(2000)], A)
         self.assertIn("switch the plan to Prime", str(e.exception))
 
+    def test_charts_run_several_at_a_time(self):
+        import threading, time as _t
+        live, peak, lock = [0], [0], threading.Lock()
+        real = self.fake
+
+        def slow(req, timeout=20):
+            if "/data/history" in req.full_url:
+                with lock:
+                    live[0] += 1
+                    peak[0] = max(peak[0], live[0])
+                _t.sleep(0.05)
+                with lock:
+                    live[0] -= 1
+            return real(req, timeout)
+        fy._urlopen = slow
+        with open(fy.APP_CONFIG, "w") as fh:
+            json.dump({"fyers_plan": "prime"}, fh)
+        seen = []
+        got, failed = fy.charts(["S%d" % i for i in range(24)], "5d", "5m", self.now,
+                                progress=lambda n, t: seen.append((n, t)))
+        self.assertEqual(len(got), 24)
+        self.assertGreater(peak[0], 1)                       # in parallel...
+        self.assertLessEqual(peak[0], 8)                     # ...at most 8 at once
+        self.assertEqual(seen[-1], (24, 24))
+        with open(fy.PACE_FILE) as fh:
+            self.assertEqual(json.load(fh)["count"], 24)     # every one counted against the limits
+
+    def test_a_scan_skips_what_cannot_have_broken_out(self):
+        class Fy:
+            FyersError = fy.FyersError
+            asked = []
+
+            def plan(self):
+                return fy.PLANS["prime"]
+
+            def quotes(self, syms):
+                return {"UP": {"high": 105, "open": 100, "price": 104}, "FLAT": {"high": 100, "open": 100, "price": 99},
+                        "CHEAP": {"high": 12, "open": 10, "price": 11}}
+
+            def charts(self, syms, rng, interval, quote_map=None, workers=None, progress=None):
+                self.asked.extend(syms)
+                return {}, {}
+
+        class A:
+            json, quiet, min_price = True, True, 20.0
+        f = Fy()
+        scan.fyers_orb_bars(f, ["UP", "FLAT", "CHEAP", "NOQUOTE"], "1d", True, A)
+        self.assertEqual(f.asked, ["UP", "NOQUOTE"])        # FLAT never rose, CHEAP is under ₹20
+        f.asked = []
+        scan.fyers_orb_bars(f, ["UP", "FLAT"], "5d", False, A)
+        self.assertEqual(f.asked, ["UP", "FLAT"])           # a past day: no live quotes to filter by
+
     def test_a_scan_asks_for_quotes_once(self):
         fy.yahoo_compat(scan.spark_path(["RELIANCE", "INFY", "TCS"], "1d", "5m"), self.now)
         self.assertEqual(len([c for c in self.fake.calls if "/data/quotes" in c[1]]), 1)

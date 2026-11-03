@@ -75,7 +75,7 @@ class DemoDashboard(unittest.TestCase):
     def test_4_a_paper_trade_end_to_end(self):
         self.post("/api/demo/reset")
         self.post("/api/clock", {"time": "10:10"})
-        code, scan = self.post("/api/scan")
+        code, scan = self.post("/api/scan", {"wait": True})
         self.assertEqual(code, 200)
         self.assertIn("TSLA", [h["symbol"] for h in scan["hits"]])
         code, e = self.post("/api/entry", {"symbol": "TSLA"})
@@ -148,6 +148,20 @@ class DemoDashboard(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_8_scan_in_the_background_with_progress(self):
+        import time
+        self.post("/api/clock", {"time": "10:00"})
+        code, r = self.post("/api/scan", {"scope": "market"})
+        self.assertEqual((code, r["running"]), (200, True))
+        for _ in range(300):
+            code, st = self.call("GET", "/api/scan/status")
+            if not st["running"]:
+                break
+            time.sleep(0.1)
+        self.assertIsNone(st["error"])
+        self.assertIn("TSLA", [h["symbol"] for h in st["result"]["hits"]])
+        self.assertIsNotNone(st["seconds"])
 
     def test_7_backtest(self):
         code, r = self.post("/api/backtest", {"target": "2R"})

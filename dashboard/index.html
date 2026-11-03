@@ -294,8 +294,9 @@ footer { position: relative; z-index: 2; text-align: center; color: var(--dim); 
       <div class="pb">
         <div class="row" style="margin-bottom:8px">
           <select id="scanScope" title="what to scan" aria-label="Scan scope" style="flex:1">
-            <option value="market">Whole market</option>
-            <option value="favorites">My favourites</option>
+            <option value="nifty500">Nifty 500 (about a minute)</option>
+            <option value="market">Whole market (a few minutes)</option>
+            <option value="favorites">My favourites (seconds)</option>
           </select>
           <button class="primary" id="btnScan">SCAN</button>
         </div>
@@ -907,14 +908,28 @@ async function refreshState() {
 async function refreshBook() { try { S.book = await api("/api/book"); renderBook(); renderPipe(); } catch (e) { } }
 
 async function doScan(btn) {
-  await busy("scan", btn, async () => {
-    $("scanInfo").textContent = "Scanning… a full-market scan takes a few minutes the first time.";
-    const r = await api("/api/scan", { scope: $("scanScope").value });
-    S.hits = r.hits || [];
-    $("scanInfo").textContent = `${r.as_of || ""} · ${r.scanned || 0} charts · ${S.hits.length} breakouts${r.failed ? " · " + r.failed + " failed" : ""}`;
-    renderHits(); renderPipe();
-    if (!S.symbol && S.hits.length) selectSymbol(S.hits[0].symbol);
-  });
+  if (S.busy.scan) return;
+  S.busy.scan = true; btn.disabled = true; btn.innerHTML = '<span class="spin"></span>';
+  const scope = $("scanScope").value;
+  try {
+    await api("/api/scan", { scope });
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 1200));
+      const st = await api("/api/scan/status");
+      const last = (st.lines || []).filter((l) => !/^FYERS:/.test(l)).slice(-1)[0] || "Starting…";
+      $("scanInfo").textContent = `Scanning · ${Math.round(st.elapsed || 0)} s · ${last.trim()}`;
+      if (st.running) continue;
+      if (st.error) throw new Error(st.error);
+      const r = st.result || {};
+      S.hits = r.hits || []; S.showAllHits = false;
+      $("scanInfo").textContent = `${r.as_of || ""} · ${r.scanned || 0} charts · ${S.hits.length} breakouts${r.failed ? " · " + r.failed + " failed" : ""} · ${Math.round(st.seconds || 0)} s`;
+      renderHits(); renderPipe();
+      if (!S.symbol && S.hits.length) selectSymbol(S.hits[0].symbol);
+      try { S.status = await api("/api/status"); renderTop(); } catch (e) { }
+      break;
+    }
+  } catch (e) { toast(e.message, "bad", 9000); $("scanInfo").textContent = "Scan stopped: " + e.message; }
+  finally { S.busy.scan = false; btn.disabled = false; btn.textContent = "SCAN"; }
 }
 async function doEntry(btn) { if (!S.symbol) return toast("Pick a symbol first.", "warn");
   await busy("entry", btn, async () => { const r = await api("/api/entry", { symbol: S.symbol }); toast(`${r.symbol}: ${r.status}. ${r.reason || ""}`, r.status === "triggered" ? "good" : "warn"); await refreshState(); }); }

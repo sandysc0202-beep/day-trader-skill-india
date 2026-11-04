@@ -17,7 +17,7 @@ Then open http://127.0.0.1:8765 (it opens by itself unless `--no-browser`).
 | panel | what | from |
 | --- | --- | --- |
 | Session bar | IST clock, the NSE session from 9:15 to 3:30 with the opening range, 9:30, last entry and flat-by marked | trader-alerts' NSE calendar, your config |
-| 01 Scanner | opening-range breakouts: the whole market (Yahoo) or your favourites (FYERS when logged in) | `scan.py orb` |
+| 01 Scanner | opening-range breakouts, best score first: each with its score out of 100 (volume vs usual, how far past the range, the range's width, the Nifty, room under yesterday's high) and why | `scan.py orb` |
 | 02 Favourites | your symbols with live prices and sparklines (`trader/favorites.txt`) | FYERS quotes, or Yahoo |
 | Chart | 5-minute candles, the opening range, entry, stop and target, and the Time Machine's cone (5 to 95 % and 25 to 75 % of 10,000 replays, and the median) | the chart data, `trader/plan.json`, `trader/timemachine.json` |
 | Pipeline | scan, entry, plan, replay, size, risk, yes, fill, exit: what is done for the symbol on screen | the files in `trader/` |
@@ -32,7 +32,8 @@ Then open http://127.0.0.1:8765 (it opens by itself unless `--no-browser`).
 **BACKTEST** replays the strategy over past sessions for your favourites (or
 the symbols you type), the last year by default, with your rules and FYERS'
 charges: trades, win rate, average R after charges, net P&L, the worst losing
-run, max drawdown, profit factor, an equity curve and every month. It runs
+run, max drawdown, profit factor, an equity curve, every month, and the
+SCORE CHECK: whether higher-scored trades had a better average R. It runs
 `trader-backtest/backtest.py`; a year needs today's FYERS login (Yahoo keeps
 60 days), and the bars are cached so the next run is quick.
 

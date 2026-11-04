@@ -310,7 +310,34 @@ def sessions(candles):
 
 # ---------------------------------------------------------------- one day, one symbol
 
-def simulate_day(sym, day, bars, cfg, rules):
+def scan_module():
+    """trader-scanner/scan.py next door: the backtest scores each trade with the scanner's own
+    score_breakout, so a score means the same thing in both."""
+    import importlib.util
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "trader-scanner", "scan.py")
+    if not os.path.isfile(path):
+        return None
+    spec = importlib.util.spec_from_file_location("backtest_scan", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_SCAN = []
+
+
+def score_at_entry(bars, n_range, k, prior, market):
+    """The scanner's score for the breakout at bar k, or (None, "", {}) without the scanner."""
+    if not _SCAN:
+        _SCAN.append(scan_module())
+    sm = _SCAN[0]
+    if sm is None:
+        return None, "", {}
+    pct = (market or {}).get(bars[k]["m"])
+    return sm.score_breakout(bars, n_range, k, prior or None, pct)
+
+
+def simulate_day(sym, day, bars, cfg, rules, prior=None, market=None):
     """The trade the rules would have made that day, or None (with the reason in a dict)."""
     or_end = minutes(OPEN) + rules["or_minutes"]
     or_bars = [b for b in bars if b["m"] < or_end]
@@ -389,7 +416,9 @@ def simulate_day(sym, day, bars, cfg, rules):
     net = round(gross - ch["total"], 2)
     planned = risk * qty
     held = (exit_bar["m"] + BAR - (tb["m"] + BAR)) if exit_bar else 0
+    score, why, _ = score_at_entry(bars, rules["or_minutes"] // BAR, trig, prior, market)
     return {"symbol": sym, "date": day.isoformat(), "time": "%02d:%02d" % divmod(tb["m"] + BAR, 60),
+            "score": score, "reason": why,
             "or_high": round(hi, 2), "or_low": round(lo, 2), "entry": entry, "stop": stop, "target": target,
             "qty": qty, "exit": exit_px, "outcome": outcome, "final_stop": round(cur, 2),
             "exit_time": "%02d:%02d" % divmod((exit_bar["m"] + BAR) if exit_bar else tb["m"] + BAR, 60),
@@ -399,11 +428,68 @@ def simulate_day(sym, day, bars, cfg, rules):
 
 # ---------------------------------------------------------------- the whole run
 
+NIFTY = "NSE:NIFTY50-INDEX"
+
+
+def nifty_by_day(start, end, a, notes):
+    """{date: {bar minute: Nifty 50 % from its open at that bar's close}}, from FYERS (a few
+    requests a year, cached like the stocks). Without FYERS: {} and the score counts the market
+    part as half, as the scanner does."""
+    if a.offline or not fyers_module():
+        return {}
+    try:
+        candles, src = load_candles(NIFTY, start, end, a, notes)
+    except BacktestError as e:
+        notes.append("Nifty 50: %s (the score's market part counts half)" % e)
+        return {}
+    out = {}
+    for day, bars in sessions(candles).items():
+        if bars:
+            o = bars[0]["o"]
+            out[day] = {b["m"]: round(100.0 * (b["c"] / o - 1), 3) for b in bars} if o else {}
+    return out
+
+
+def score_check(trades):
+    """Do higher-scored trades do better? Average R after charges by score band, and the
+    correlation between the score and R (from -1 to 1; 0 = no link)."""
+    scored = [t for t in trades if t.get("score") is not None]
+    if not scored:
+        return None
+    bands = []
+    for lo, hi in ((0, 50), (50, 65), (65, 80), (80, 101)):
+        g = [t for t in scored if lo <= t["score"] < hi]
+        if g:
+            bands.append({"band": "%d-%d" % (lo, min(hi, 100)), "trades": len(g),
+                          "win_rate": round(100.0 * sum(t["net"] > 0 for t in g) / len(g), 1),
+                          "avg_r_net": round(sum(t["r_net"] for t in g) / len(g), 3)})
+    n = len(scored)
+    xs, ys = [t["score"] for t in scored], [t["r_net"] for t in scored]
+    mx, my = sum(xs) / n, sum(ys) / n
+    sx = math.sqrt(sum((x - mx) ** 2 for x in xs))
+    sy = math.sqrt(sum((y - my) ** 2 for y in ys))
+    corr = round(sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / (sx * sy), 3) if sx and sy else None
+    half = sorted(scored, key=lambda t: t["score"])
+    lower, upper = half[:n // 2], half[n // 2:]
+    avg = lambda g: round(sum(t["r_net"] for t in g) / len(g), 3) if g else None
+    if n < 30:
+        verdict = "too few trades (%d) to say whether the score picks better trades" % n
+    elif corr is not None and corr > 0.1 and avg(upper) > avg(lower):
+        verdict = "yes, so far: the higher-scored half averaged %+.2fR, the lower half %+.2fR" % (avg(upper), avg(lower))
+    elif corr is not None and corr < -0.1:
+        verdict = "no: higher scores did worse here (%+.2fR vs %+.2fR)" % (avg(upper), avg(lower))
+    else:
+        verdict = "not clearly: the higher-scored half averaged %+.2fR, the lower half %+.2fR" % (avg(upper), avg(lower))
+    return {"bands": bands, "correlation": corr, "upper_half_avg_r": avg(upper), "lower_half_avg_r": avg(lower),
+            "verdict": verdict}
+
+
 def run(symbols, start, end, cfg, rules, a, progress=None):
     notes, sources, failed = [], collections.Counter(), {}
     by_day = collections.defaultdict(list)
     skipped = collections.Counter()
     days_seen = set()
+    nifty = nifty_by_day(start, end, a, notes)
     for n, sym in enumerate(symbols, 1):
         if progress and (n % 10 == 0 or n == len(symbols)):
             progress("  %d of %d symbols" % (n, len(symbols)))
@@ -416,9 +502,11 @@ def run(symbols, start, end, cfg, rules, a, progress=None):
         if not candles:
             failed[sym] = "no 5-minute bars in the window"
             continue
+        history = []
         for day, bars in sorted(sessions(candles).items()):
             days_seen.add(day)
-            res = simulate_day(sym, day, bars, cfg, rules)
+            res = simulate_day(sym, day, bars, cfg, rules, prior=history[-4:], market=nifty.get(day))
+            history.append(bars)
             if "skip" in res:
                 skipped[res["skip"]] += 1
             else:
@@ -503,6 +591,7 @@ def summarize(trades):
         "outcomes": dict(outcomes), "months": months,
         "avg_minutes": round(sum(t["minutes"] for t in trades) / n, 1),
         "equity": curve,
+        "score_check": score_check(trades),
     }
 
 
@@ -548,6 +637,14 @@ def render(doc):
             "", "Month     trades  win%     net"]
         for m, v in s["months"].items():
             out.append("%s   %5d  %4.0f%%  %10s" % (m, v["trades"], 100.0 * v["wins"] / v["trades"], money(v["net"])))
+    sc = s.get("score_check") if s.get("trades") else None
+    if sc:
+        out += ["", "Score check (does a higher scanner score mean a better trade?): %s." % sc["verdict"],
+                "Score     trades  win%   avg R net"]
+        for b in sc["bands"]:
+            out.append("%-8s  %5d  %4.0f%%  %+8.2f" % (b["band"], b["trades"], b["win_rate"], b["avg_r_net"]))
+        if sc["correlation"] is not None:
+            out.append("Correlation between score and R: %+.2f (0 = no link, 1 = perfect)" % sc["correlation"])
     if doc["passed_over"]:
         out.append("")
         out.append("Breakouts left out by the day limits: %s." % ", ".join(
@@ -637,8 +734,8 @@ def cmd_run(a):
     if not a.no_write:
         write_json(a.out, doc)
         with open(os.path.splitext(a.out)[0] + "-trades.csv", "w", newline="", encoding="utf-8") as fh:
-            cols = ["date", "symbol", "time", "entry", "stop", "target", "qty", "exit", "exit_time", "outcome",
-                    "minutes", "gross", "charges", "net", "r", "r_net"]
+            cols = ["date", "symbol", "time", "score", "entry", "stop", "target", "qty", "exit", "exit_time",
+                    "outcome", "minutes", "gross", "charges", "net", "r", "r_net", "reason"]
             w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
             w.writeheader()
             for t in res["trades"]:

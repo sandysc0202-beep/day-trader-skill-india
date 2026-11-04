@@ -346,6 +346,7 @@ class Bridge(Base):
 
             def charts(self, syms, rng, interval, quote_map=None, workers=None, progress=None):
                 self.asked.extend(syms)
+                self.rng = rng
                 return {}, {}
 
         class A:
@@ -353,6 +354,22 @@ class Bridge(Base):
         f = Fy()
         scan.fyers_orb_bars(f, ["UP", "FLAT", "CHEAP", "NOQUOTE"], "1d", True, A)
         self.assertEqual(f.asked, ["UP", "NOQUOTE"])        # FLAT never rose, CHEAP is under ₹20
+        self.assertIsNone(A._market_pct)                    # no Nifty in this answer: the score counts it half
+
+        class WithNifty(Fy):
+            plain_symbol = staticmethod(fy.plain_symbol)
+
+            def quotes(self, syms):
+                self.quoted = list(syms)
+                return {"UP": {"high": 105, "open": 100, "price": 104},
+                        "NIFTY50-INDEX": {"high": 25200, "open": 25000, "price": 25100}}
+        g = WithNifty()
+        g.asked = []
+        scan.fyers_orb_bars(g, ["UP"], "1d", True, A)
+        self.assertIn("NSE:NIFTY50-INDEX", g.quoted)        # in the same quote request: no extra call
+        self.assertEqual(A._market_pct, 0.4)
+        self.assertEqual(g.asked, ["UP"])                   # the index is never scanned as a stock
+        self.assertEqual(g.rng, "5d")                       # one chart request a stock, with the earlier days
         f.asked = []
         scan.fyers_orb_bars(f, ["UP", "FLAT"], "5d", False, A)
         self.assertEqual(f.asked, ["UP", "FLAT"])           # a past day: no live quotes to filter by

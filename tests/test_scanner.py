@@ -55,6 +55,14 @@ def bars_series(day, closes, highs=None, lows=None, start="09:15", extra=None):
     return s
 
 
+
+SCORE_KEYS = ("score", "reason", "score_parts")
+
+
+def core(hit):
+    """A hit without the ranking fields: the scan's own result, which the score never changes."""
+    return {k: v for k, v in hit.items() if k not in SCORE_KEYS}
+
 class Universe(unittest.TestCase):
     def setUp(self):
         texts = {}
@@ -324,7 +332,7 @@ class Orb(unittest.TestCase):
         self.assertEqual(len(hits), 42)
         self.assertEqual(self.errors, {"SQ": "no data for SQ: No data found, symbol may be delisted"})
         self.assertEqual(counts["unusable"], 2)            # WBD (no bars), PARA (missing bars)
-        tsla = [h for h in hits if h["symbol"] == "TSLA"][0]
+        tsla = core([h for h in hits if h["symbol"] == "TSLA"][0])
         self.assertEqual(tsla, {"symbol": "TSLA", "setups": ["orb"], "price": 364.18, "at": "10:00 AM",
                                 "bar_start": "09:55", "bar_index": 8, "or_high": 362.18, "or_low": 354.47,
                                 "pct_over": 0.55})
@@ -455,7 +463,7 @@ class LiveFiveMinute(unittest.TestCase):
         day, cut = scan.orb_window(self.now, None, 15, datetime.time(15, 15))
         hits, counts, failed = scan.scan_orb(self.spark, ["TSLA", "AMC"], day, cut, 15, 5, 0, lambda s: self.v8)
         # range 9:15 to 9:30: high 370.49 (the 9:15 bar), low 363.64; the 9:40 bar closed 370.585 at 9:45
-        self.assertEqual(hits, [{"symbol": "TSLA", "setups": ["orb"], "price": 370.58, "at": "9:45 AM",
+        self.assertEqual([core(h) for h in hits], [{"symbol": "TSLA", "setups": ["orb"], "price": 370.58, "at": "9:45 AM",
                                  "bar_start": "09:40", "bar_index": 5, "or_high": 370.49, "or_low": 363.64,
                                  "pct_over": 0.03}])
         self.assertEqual(counts["illiquid"], 1)            # AMC under the 5 floor
@@ -533,7 +541,7 @@ class Cli(unittest.TestCase):
                           "as_of": "2026-10-19 10:00 IST", "universe": 234, "scanned": 231, "source": "yahoo"})
         self.assertEqual(len(doc["hits"]), 42)
         self.assertIn({"symbol": "TSLA", "setups": ["orb"], "price": 364.18, "at": "10:00 AM", "bar_start": "09:55",
-                       "bar_index": 8, "or_high": 362.18, "or_low": 354.47, "pct_over": 0.55}, doc["hits"])
+                       "bar_index": 8, "or_high": 362.18, "or_low": 354.47, "pct_over": 0.55}, [core(h) for h in doc["hits"]])
 
         # the hits read back as a watchlist, with --at instead of --now
         code, text, _ = run(["orb", "--offline", WALL, "--at", "10:00", "--watchlist", self.wl, "--min-price", "0",
@@ -653,3 +661,54 @@ class Cli(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Score(unittest.TestCase):
+    """The ranking: a score from 0 to 100 on every hit. It changes no scan rule."""
+
+    def bars(self, rows):
+        return [{"h": h, "l": l, "c": c, "v": v} for h, l, c, v in rows]
+
+    # a range of 100 to 102 (2% of the price... at 102.5: 1.95%), the breakout bar closes 102.5
+    TODAY = [(102, 100.5, 101.5, 1000), (101.8, 100, 101, 800), (101.9, 100.6, 101.7, 700), (102.8, 101.6, 102.5, 3000)]
+
+    def test_a_strong_breakout_scores_high(self):
+        prior = [self.bars([(99, 98, 98.5, 500)] * 4)] * 4                # quiet earlier days, high 99
+        sc, why, parts = scan.score_breakout(self.bars(self.TODAY), 3, 3, prior, market_pct=0.5)
+        self.assertEqual(parts["volume"], 30.0)                            # 5,500 vs 2,000 usual = 2.75x
+        self.assertEqual(parts["market"], 15.0)
+        self.assertEqual(parts["room"], 15.0)                              # above yesterday's high
+        self.assertIn("volume 2.8x usual", why)
+        self.assertIn("above yesterday's high", why)
+        self.assertGreaterEqual(sc, 85)
+        self.assertEqual(sc, int(round(sum(parts.values()))))
+
+    def test_weak_parts_score_low(self):
+        prior = [self.bars([(104, 99, 100, 5000)] * 4)] * 4                # busy days, yesterday's high 104
+        sc, why, parts = scan.score_breakout(self.bars(self.TODAY), 3, 3, prior, market_pct=-0.5)
+        self.assertEqual(parts["volume"], 0.0)                             # 0.28x usual
+        self.assertEqual(parts["market"], 0.0)
+        self.assertLess(parts["room"], 15)                                 # 104 is 1.0R above 102.5 (R = 1.5)
+        self.assertIn("yesterday's high 1.0R above", why)
+        self.assertLess(sc, 50)
+
+    def test_unknown_parts_count_half(self):
+        sc, why, parts = scan.score_breakout(self.bars(self.TODAY), 3, 3)
+        self.assertEqual((parts["volume"], parts["market"], parts["room"]), (15.0, 7.5, 7.5))
+        self.assertTrue(why.endswith("no data for volume, Nifty, yesterday's high (counted half)"))
+
+    def test_range_and_strength_shapes(self):
+        tight = self.bars([(100.1, 100, 100.05, 1)] * 3 + [(100.3, 100.1, 100.2, 1)])  # a 0.1% range
+        self.assertEqual(scan.score_breakout(tight, 3, 3)[2]["range"], 0.0)
+        chase = self.bars([(101, 100, 100.5, 1)] * 3 + [(110, 101, 109, 1)])           # 0.9R past the range
+        self.assertEqual(scan.score_breakout(chase, 3, 3)[2]["strength"], 0.0)
+
+    def test_every_hit_carries_its_score(self):
+        day = datetime.date(2026, 10, 19)
+        data, failed = scan.load_offline(WALL)
+        cut = datetime.datetime(2026, 10, 19, 10, 0)
+        hits, counts, _ = scan.scan_orb(data, sorted(data), day, cut, 15)
+        self.assertEqual(len(hits), 42)                                    # the same hits as before
+        for h in hits:
+            self.assertTrue(0 <= h["score"] <= 100)
+            self.assertEqual(set(h["score_parts"]), set(scan.SCORE_POINTS))

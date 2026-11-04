@@ -44,6 +44,16 @@ python3 "${CLAUDE_SKILL_DIR}/backtest.py" show
 Without today's FYERS login it falls back to Yahoo, which keeps only about
 60 days of 5-minute bars, and it says so. A year needs FYERS.
 
+## The score check
+
+Each trade also gets the scanner's score at its entry bar (the 4 sessions
+before it and the Nifty 50 that day; the Nifty is one extra history request
+a 100 days). The report groups trades by score (0-50, 50-65, 65-80, 80-100)
+with win rate and average R after charges, the correlation between score and
+R, and a verdict comparing the higher- and lower-scored halves. Under 30
+trades it says too few to tell. The CSV has `score` and `reason` columns.
+It is a check, not a filter: the same trades are taken either way.
+
 ## The rules it replays
 
 Exactly the live pack's, so the result is about the strategy you will trade:

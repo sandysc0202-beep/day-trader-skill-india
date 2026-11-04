@@ -649,6 +649,101 @@ def orb_hit(bars, n_range):
     return None
 
 
+# ---------------------------------------------------------------- the score (ranking only)
+
+NIFTY = "NSE:NIFTY50-INDEX"          # FYERS' Nifty 50, read in the scan's own quote request
+SCORE_POINTS = {"volume": 30, "strength": 20, "range": 20, "market": 15, "room": 15}
+
+
+def _ramp(x, lo, hi):
+    """0 at lo, 1 at hi, straight in between (works downhill when lo > hi)."""
+    if hi == lo:
+        return 1.0 if x >= hi else 0.0
+    return max(0.0, min(1.0, (x - lo) / float(hi - lo)))
+
+
+def score_breakout(bars, n_range, k, prior=None, market_pct=None, target_r=2.0):
+    """How strong a breakout looks, 0 to 100. Ranking only: it changes no rule.
+
+    bars       today's 5-minute bars from 9:15, in order: dicts with h, l, c, v
+    k          the index of the breakout bar (the first close above the range high)
+    prior      earlier sessions' bars, oldest first, the same shape (the scan asks FYERS
+               for 5 days in its one request per stock); missing -> those parts score half
+    market_pct the Nifty 50 against its open, in %; None -> half
+
+    The five parts (points): volume 30 (today's volume to the breakout bar against the same
+    bars on earlier days: 2.5x or more is full), strength 20 (the close past the range high,
+    in R, with the stop at the range midpoint: 0.15 to 0.5R is full, a chase past 0.85R is 0),
+    range 20 (the opening range as % of the price: 0.6 to 2% is full, under 0.2% or over 4% is
+    0), market 15 (Nifty up 0.2% or more is full, down 0.2% or more is 0), room 15 (yesterday's
+    high: already under the price, or 2R or more above it, is full; within 0.5R is 0).
+    -> (score, one-line reason, {part: points})."""
+    rng = bars[:n_range]
+    oh = max(b["h"] for b in rng)
+    ol = min(b["l"] for b in rng)
+    entry = bars[k]["c"]
+    stop = (oh + ol) / 2.0
+    risk = entry - stop
+    parts, why, unknown = {}, [], []
+    # 1. relative volume, to the breakout bar
+    today_vol = sum((b.get("v") or 0) for b in bars[:k + 1])
+    past = [sum((b.get("v") or 0) for b in d[:k + 1]) for d in (prior or []) if len(d) > k]
+    past = [v for v in past if v > 0]
+    if past and today_vol:
+        rv = today_vol / (sum(past) / len(past))
+        parts["volume"] = SCORE_POINTS["volume"] * _ramp(rv, 0.5, 2.5)
+        why.append("volume %.1fx usual" % rv)
+    else:
+        parts["volume"] = SCORE_POINTS["volume"] / 2.0
+        unknown.append("volume")
+    # 2. breakout strength, in R
+    st = (entry - oh) / risk if risk > 0 else 0.0
+    parts["strength"] = SCORE_POINTS["strength"] * (_ramp(st, 0.0, 0.15) if st < 0.5 else _ramp(st, 0.85, 0.5))
+    why.append("%.2fR past the range" % st)
+    # 3. range quality
+    w = 100.0 * (oh - ol) / entry if entry else 0.0
+    parts["range"] = SCORE_POINTS["range"] * (_ramp(w, 0.2, 0.6) if w < 2.0 else _ramp(w, 4.0, 2.0))
+    why.append("range %.1f%%" % w)
+    # 4. the market
+    if market_pct is None:
+        parts["market"] = SCORE_POINTS["market"] / 2.0
+        unknown.append("Nifty")
+    else:
+        parts["market"] = SCORE_POINTS["market"] * _ramp(market_pct, -0.2, 0.2)
+        why.append("Nifty %+.1f%%" % market_pct)
+    # 5. room to the target: yesterday's high
+    if prior and prior[-1] and risk > 0:
+        pdh = max(b["h"] for b in prior[-1])
+        if pdh <= entry:
+            parts["room"] = float(SCORE_POINTS["room"])
+            why.append("above yesterday's high")
+        else:
+            gap = (pdh - entry) / risk
+            parts["room"] = SCORE_POINTS["room"] * _ramp(gap, 0.5, target_r)
+            why.append("yesterday's high %.1fR above" % gap)
+    else:
+        parts["room"] = SCORE_POINTS["room"] / 2.0
+        unknown.append("yesterday's high")
+    if unknown:
+        why.append("no data for %s (counted half)" % ", ".join(unknown))
+    parts = {k_: round(v, 1) for k_, v in parts.items()}
+    return int(round(sum(parts.values()))), " · ".join(why), parts
+
+
+def earlier_sessions(series, day, n=4):
+    """Up to n complete sessions before `day` in a series, oldest first (the bars score_breakout reads)."""
+    days = sorted({ts_to_ist(t).date() for t in series.get("t") or [] if ts_to_ist(t).date() < day})[-n:]
+    out = []
+    for d in days:
+        s = session(d)
+        if not s:
+            continue
+        bars = session_bars(series, d, datetime.datetime.combine(d, s[1]))
+        if bars and all(b["h"] is not None and b["l"] is not None for b in bars):
+            out.append(bars)
+    return out
+
+
 def orb_window(now_utc, at, or_minutes, until, explicit_day=None):
     """-> (day, cutoff naive IST) or raise ScanError with the plain message."""
     now = to_ist(now_utc)
@@ -689,7 +784,7 @@ def orb_window(now_utc, at, or_minutes, until, explicit_day=None):
 
 
 def scan_orb(stage1, symbols, day, cutoff, or_minutes, min_price=0.0, min_volume=0, confirm=None,
-             max_confirm=None):
+             max_confirm=None, market_pct=None):
     """stage1 = {SYM: series} with closes (spark or v8). confirm(sym) -> series with highs/lows
     (None = use the stage-1 series). With confirm and max_confirm, only the max_confirm most
     traded candidates (price x volume so far) are confirmed; the rest are counted as unconfirmed.
@@ -734,6 +829,9 @@ def scan_orb(stage1, symbols, day, cutoff, or_minutes, min_price=0.0, min_volume
         counts["confirmed"] += 1
         h = orb_hit(full, n_range)
         if h:
+            prior = earlier_sessions(stage1.get(sym) or {}, day)
+            sc, why, parts = score_breakout(full, n_range, h["bar_index"], prior, market_pct)
+            h.update(score=sc, reason=why, score_parts=parts)
             hits.append(dict({"symbol": sym, "setups": ["orb"]}, **h))
     hits.sort(key=lambda x: (x["_t"], x["symbol"]))
     for h in hits:
@@ -896,13 +994,17 @@ def fyers_orb_bars(fy, symbols, rng, live, a):
     carry real highs and lows, so there is no second, confirming stage.
     -> ({SYM: series}, {SYM: why it failed})."""
     keep, skipped = list(symbols), 0
+    a._market_pct = None
     if live:
         progress(a, "Stage 1: today's prices for %s symbols (%d quote requests)..."
                  % ("{:,}".format(len(symbols)), (len(symbols) + 49) // 50))
         try:
-            q = fy.quotes(symbols)
+            q = fy.quotes(list(symbols) + [NIFTY])
         except fy.FyersError as e:
             raise ScanError("FYERS quotes: %s" % e)
+        nq = q.pop(fy.plain_symbol(NIFTY), None) if hasattr(fy, "plain_symbol") else None
+        if nq and nq.get("open") and nq.get("price"):
+            a._market_pct = round(100.0 * (nq["price"] / nq["open"] - 1), 2)
         keep = []
         for s in symbols:
             v = q.get(s.upper())
@@ -919,7 +1021,8 @@ def fyers_orb_bars(fy, symbols, rng, live, a):
     progress(a, "Stage 2: %s 5-minute charts from FYERS, %d at a time (up to %d a minute)..."
              % ("{:,}".format(len(keep)), workers, fy.plan()["per_minute"]))
     try:
-        got, failed = fy.charts(keep, rng, "%dm" % BAR_MIN, quote_map=q, workers=workers,
+        # "5d": the same one request per stock also brings the earlier days the score reads
+        got, failed = fy.charts(keep, "5d", "%dm" % BAR_MIN, quote_map=q, workers=workers,
                                 progress=lambda n, t: progress(a, "  stage 2: %d of %d charts" % (n, t)))
     except fy.FyersError as e:
         raise ScanError("FYERS: %s" % e)
@@ -1056,7 +1159,7 @@ def cmd_orb(a):
                 progress(a, "  stage 2: %d v8 charts so far" % len(done))
             return parse_chart(yahoo_get(chart_path(sym, rng, "%dm" % BAR_MIN)), sym)
     hits, counts, failed2 = scan_orb(data, symbols, day, cutoff, a.or_minutes, a.min_price, a.min_volume, confirm,
-                                     a.max_confirm)
+                                     a.max_confirm, market_pct=getattr(a, "_market_pct", None))
     failed = dict(failed or {})
     failed.update(failed2)
     nfailed = len([s for s in symbols if s in failed])

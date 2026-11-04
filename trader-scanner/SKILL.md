@@ -43,6 +43,26 @@ to read saved Yahoo files, `--no-write`, `--show N`, `--json`. Exit code 0
 when the scan found something, 1 when it found nothing or could not run (the
 reason is one plain line).
 
+### The score (0 to 100)
+
+Every ORB hit gets `score`, a one-line `reason` and `score_parts`. It only
+ranks; it never adds, drops or changes a hit, an entry, a stop or a limit.
+
+| part | points | full marks | none |
+| --- | --- | --- | --- |
+| Relative volume: volume to the breakout bar vs the same time on up to 4 earlier sessions | 30 | 2.5x usual | 0.5x |
+| Breakout strength: close above the range high, in R (R = close minus the range midpoint) | 20 | 0.15R to 0.5R | 0R, or 0.85R+ (chasing) |
+| Range quality: range width as % of price | 20 | 0.6 % to 2 % | 0.2 % or less, 4 % or more |
+| Market: Nifty 50 against its open | 15 | +0.2 % | -0.2 % |
+| Room: yesterday's high against the entry | 15 | at or below the entry, or 2R+ above | 0.5R above or less |
+
+A part with no data (a single-day chart, no Nifty quote) counts half and the
+reason says so. With FYERS the earlier sessions come in the same chart
+request (5 days), and the Nifty in the same quote request as the
+pre-filter: no extra calls. The dashboard lists hits best score first;
+`watchlist.json` keeps them in time order. trader-backtest checks whether a
+higher score has meant better trades.
+
 ## What it reads and writes
 
 | file | what |

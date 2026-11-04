@@ -171,6 +171,9 @@ input::placeholder { color: var(--dim); }
 .li.active { background: linear-gradient(90deg, rgba(0, 229, 255, .14), transparent); border-color: var(--line-hi); }
 .li .sym { font-weight: 700; letter-spacing: .05em; display: flex; align-items: center; gap: 6px; }
 .li .px { font-family: var(--mono); text-align: right; }
+.li .why { grid-column: 1 / -1; color: var(--muted); font-size: 10.5px; line-height: 1.35; }
+.score { font-family: var(--mono); font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 5px; border: 1px solid currentColor; }
+.score.hi { color: #2bff9a; } .score.mid { color: #ffc24b; } .score.lo { color: #ff7a9a; }
 .li .meta { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 11px; font-family: var(--mono); }
 .li canvas { width: 70px; height: 22px; }
 .favgrid .li { grid-template-columns: 1fr 74px auto; }
@@ -628,17 +631,23 @@ function renderTrack(m, c) {
 }
 
 /* ====================================================================== left: scanner + favourites */
+/* best score first; hits without a score (older files) go last, in their time order */
+function rankedHits() {
+  return S.hits.map((h, i) => [h, i]).sort((a, b) => ((b[0].score != null ? b[0].score : -1) - (a[0].score != null ? a[0].score : -1)) || a[1] - b[1]).map((x) => x[0]);
+}
 function renderHits() {
   const box = $("hits");
   if (!S.hits.length) { box.innerHTML = '<div class="empty">No breakouts yet. Run SCAN after 9:30.</div>'; return; }
   const all = S.showAllHits || S.hits.length <= 12;
-  const shown = all ? S.hits : S.hits.slice(0, 10);
+  const ranked = rankedHits();
+  const shown = all ? ranked : ranked.slice(0, 10);
   box.innerHTML = shown.map((h) => {
     const q = S.quotes[h.symbol] || {};
+    const sc = h.score != null ? `<span class="score ${h.score >= 70 ? "hi" : h.score >= 50 ? "mid" : "lo"}" title="Breakout score out of 100">${h.score}</span> ` : "";
     return `<div class="li ${h.symbol === S.symbol ? "active" : ""}" data-sym="${esc(h.symbol)}" tabindex="0">
-      <div class="sym">${esc(h.symbol)} <span class="tag">ORB</span></div>
+      <div class="sym">${sc}${esc(h.symbol)} <span class="tag">ORB</span></div>
       <div class="px">${fmt(q.price != null ? q.price : h.price)} <span class="${cls(q.pct)}" style="font-size:11px">${pct(q.pct)}</span></div>
-      <div class="meta"><span>${esc(h.at || "")}</span><span>OR ${fmt(h.or_low)}–${fmt(h.or_high)}</span><span class="up">+${fmt(h.pct_over)}%</span></div></div>`;
+      <div class="meta"><span>${esc(h.at || "")}</span><span>OR ${fmt(h.or_low)}–${fmt(h.or_high)}</span><span class="up">+${fmt(h.pct_over)}%</span></div>${h.reason ? `<div class="why" title="${esc(h.reason)}">${esc(h.reason)}</div>` : ""}</div>`;
   }).join("") + (S.hits.length > 12 ? `<button class="sm more" data-morehits="1">${all ? "SHOW FEWER" : "SHOW ALL " + S.hits.length + " BREAKOUTS"}</button>` : "");
 }
 function renderFavs() {
@@ -937,7 +946,7 @@ async function doScan(btn) {
       S.hits = r.hits || []; S.showAllHits = false;
       $("scanInfo").textContent = `${r.as_of || ""} · ${r.scanned || 0} charts · ${S.hits.length} breakouts${r.failed ? " · " + r.failed + " failed" : ""} · ${Math.round(st.seconds || 0)} s`;
       renderHits(); renderPipe();
-      if (!S.symbol && S.hits.length) selectSymbol(S.hits[0].symbol);
+      if (!S.symbol && S.hits.length) selectSymbol(rankedHits()[0].symbol);
       try { S.status = await api("/api/status"); renderTop(); } catch (e) { }
       break;
     }
@@ -1065,6 +1074,11 @@ function renderBacktest(r) {
     <table style="margin-top:8px"><thead><tr><th>Month</th><th>Trades</th><th>Win %</th><th>Net</th></tr></thead><tbody>` +
     Object.entries(s.months).map(([m, v]) => `<tr><td>${esc(m)}</td><td>${v.trades}</td><td>${Math.round(100 * v.wins / v.trades)}%</td><td class="${cls(v.net)}">${inr(v.net, 0)}</td></tr>`).join("") +
     `</tbody></table>`;
+  const sc = s.score_check;
+  if (sc) h += `<div style="margin-top:10px;font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;color:var(--muted)">SCORE CHECK · do higher-scored trades do better?</div>
+    <div class="note" style="margin:4px 0">${esc(sc.verdict)} · correlation ${sc.correlation != null ? fmt(sc.correlation, 2) : "—"} (0 = no link, 1 = perfect)</div>
+    <table><thead><tr><th>Score</th><th>Trades</th><th>Win %</th><th>Avg R net</th></tr></thead><tbody>` +
+    sc.bands.map((b) => `<tr><td>${esc(b.band)}</td><td>${b.trades}</td><td>${Math.round(b.win_rate)}%</td><td class="${cls(b.avg_r_net)}">${b.avg_r_net >= 0 ? "+" : ""}${fmt(b.avg_r_net, 2)}</td></tr>`).join("") + `</tbody></table>`;
   for (const n of r.notes || []) h += `<div class="note amber" style="margin-top:6px">⚠ ${esc(n)}</div>`;
   if (s.trades < 100) h += `<div class="note amber" style="margin-top:6px">⚠ ${s.trades} trades is a small sample: add symbols or months before trusting the numbers.</div>`;
   h += '<div class="note" style="margin-top:8px">History, not a forecast: fills at bar closes, no order book or circuits, and today\'s list tested on the past. Every trade is in trader/backtest-trades.csv.</div>';
@@ -1125,7 +1139,7 @@ async function boot() {
   try { const wl = await api("/api/watchlist"); S.hits = wl.hits || []; } catch (e) { }
   renderHits();
   await Promise.all([refreshState(), refreshBook()]);
-  const first = S.symbol || (S.hits[0] && S.hits[0].symbol) || (S.status.favorites || [])[0];
+  const first = S.symbol || (S.hits[0] && rankedHits()[0].symbol) || (S.status.favorites || [])[0];
   if (first) selectSymbol(first);
   connect(); refreshNews();
   setInterval(refreshBook, 5000);

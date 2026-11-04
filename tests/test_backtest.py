@@ -145,6 +145,26 @@ class OnRealBars(unittest.TestCase):
         self.assertIn("Worst losing run  7 trades in a row", text)
         self.assertIn("Average R", text)
 
+    def test_every_trade_is_scored_and_checked(self):
+        code, text, _ = run(["run", "--symbols", "TSLA", "--offline", TSLA, "--to", "2026-10-19", "--json", "--no-write"])
+        doc = json.loads(text)
+        self.assertEqual(doc["summary"]["trades"], 33)                 # the same trades as without a score
+        self.assertTrue(all(0 <= t["score"] <= 100 for t in doc["trades"]))
+        sc = doc["summary"]["score_check"]
+        self.assertEqual(sum(b["trades"] for b in sc["bands"]), 33)
+        self.assertTrue(-1 <= sc["correlation"] <= 1)
+        self.assertIn("higher-scored half", sc["verdict"])
+        code, text, _ = run(["run", "--symbols", "TSLA", "--offline", TSLA, "--to", "2026-10-19", "--no-write"])
+        self.assertIn("Score check", text)
+
+    def test_the_score_check_verdicts(self):
+        good = [{"score": 40 + i, "r_net": -1 + i / 20.0, "net": i - 20} for i in range(40)]
+        self.assertTrue(bt.score_check(good)["verdict"].startswith("yes"))
+        bad = [{"score": 40 + i, "r_net": 1 - i / 20.0, "net": 20 - i} for i in range(40)]
+        self.assertTrue(bt.score_check(bad)["verdict"].startswith("no"))
+        self.assertIn("too few trades", bt.score_check(good[:10])["verdict"])
+        self.assertIsNone(bt.score_check([{"score": None, "r_net": 1, "net": 1}]))
+
     def test_settings_change_the_result(self):
         _, a, _ = run(["run", "--symbols", "TSLA", "--offline", TSLA, "--to", "2026-10-19", "--json", "--no-write"])
         _, b, _ = run(["run", "--symbols", "TSLA", "--offline", TSLA, "--to", "2026-10-19", "--json", "--no-write",

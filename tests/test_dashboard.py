@@ -51,6 +51,8 @@ class DemoDashboard(unittest.TestCase):
         code, page = self.call("GET", "/")
         self.assertEqual(code, 200)
         self.assertIn(b"NSE<b>//</b>DAYTRADER", page)
+        self.assertIn(b"const ranked = rankedHits();", page)          # scanner hits shown best score first
+        self.assertIn(b"SCORE CHECK", page)                             # and the check in the backtest window
         code, st = self.call("GET", "/api/status")
         self.assertEqual((st["mode"], st["source"], st["now_ist"]), ("demo", "demo", "2026-10-19 09:50:00"))
         self.assertTrue(st["session"]["open"])
@@ -78,6 +80,9 @@ class DemoDashboard(unittest.TestCase):
         code, scan = self.post("/api/scan", {"wait": True})
         self.assertEqual(code, 200)
         self.assertIn("TSLA", [h["symbol"] for h in scan["hits"]])
+        for h in scan["hits"]:                              # every hit is ranked, with its reason
+            self.assertTrue(0 <= h["score"] <= 100)
+            self.assertIn("past the range", h["reason"])
         code, e = self.post("/api/entry", {"symbol": "TSLA"})
         self.assertEqual(e["status"], "triggered")
         code, p = self.post("/api/plan")
@@ -191,6 +196,7 @@ if __name__ == "__main__":
         code, r = self.post("/api/backtest", {"target": "2R"})
         self.assertEqual(code, 200)
         self.assertEqual((r["summary"]["trades"], r["summary"]["worst_losing_streak"]), (33, 7))
+        self.assertIn("verdict", r["summary"]["score_check"])
         code, again = self.call("GET", "/api/backtest")
         self.assertEqual(again["summary"]["net"], r["summary"]["net"])
 

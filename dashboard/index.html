@@ -235,6 +235,24 @@ td:first-child { font-family: var(--sans); font-weight: 700; }
 .news .t { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
 .news .h { font-size: 12.5px; line-height: 1.4; }
 .news .imp { color: var(--magenta); font-weight: 700; margin-right: 4px; }
+.news .chips { display: flex; flex-wrap: wrap; gap: 5px; padding: 2px 0 8px; border-bottom: 1px solid rgba(255, 255, 255, .06); }
+.news .nchip { font-family: var(--mono); font-size: 10px; padding: 2px 8px; border-radius: 99px; border: 1px solid rgba(139, 92, 255, .35); background: none; color: var(--muted); cursor: pointer; letter-spacing: .03em; }
+.news .nchip.sym { color: #9fe8ff; border-color: rgba(43, 214, 255, .35); }
+.news .nchip.on { background: rgba(139, 92, 255, .28); color: #fff; border-color: #8b5cff; }
+.news .story { padding: 9px 2px; border-bottom: 1px solid rgba(255, 255, 255, .05); }
+.news.pulseview .stories { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 0 22px; }
+.news.pulseview .chips { position: sticky; top: -14px; background: #0c1222; z-index: 1; padding-top: 4px; }
+.news .count { font-family: var(--mono); font-size: 10px; color: #cbb8ff; }
+.modal.wide .panel { width: min(1180px, 100%); }
+.news .story > a { font-size: 13px; font-weight: 600; line-height: 1.35; color: var(--text); text-decoration: none; }
+.news .story > a:hover { color: #cbb8ff; }
+.news .sum { font-size: 11.5px; line-height: 1.4; color: var(--muted); margin-top: 3px; }
+.news .by { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-top: 4px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.news .rel { margin: 5px 0 0 10px; padding-left: 8px; border-left: 2px solid rgba(139, 92, 255, .35); }
+.news .rel div { font-size: 11.5px; line-height: 1.35; margin: 3px 0; }
+.news .rel a { color: var(--text); opacity: .85; text-decoration: none; }
+.news .rel span { font-family: var(--mono); font-size: 9.5px; color: var(--muted); }
+.news .mv { font-size: 12px; padding: 6px 2px; border-bottom: 1px solid rgba(255, 255, 255, .05); }
 
 /* ---------------------------------------------------------------- demo bar, toasts, modal */
 .demobar { grid-area: demo; position: relative; z-index: 3; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
@@ -664,11 +682,10 @@ function renderFavs() {
   box.querySelectorAll("canvas[data-spark]").forEach((c) => { const q = S.quotes[c.dataset.spark] || {}; spark(c, q.spark, (q.pct || 0) >= 0 ? "#2bff9a" : "#ff3d71"); });
 }
 function bindLists() {
-  $("newsBox").addEventListener("click", (e) => { if (e.target.closest("[data-morenews]")) { S.showAllNews = !S.showAllNews; renderNews(); } });
+  $("newsBox").addEventListener("click", (e) => { if (e.target.closest("[data-morenews]")) newsModal(); });
   for (const id of ["hits", "favs"]) {
     $(id).addEventListener("click", (e) => {
       if (e.target.closest("[data-morehits]")) { S.showAllHits = !S.showAllHits; renderHits(); return; }
-      if (e.target.closest("[data-morenews]")) { S.showAllNews = !S.showAllNews; renderNews(); return; }
       const rm = e.target.closest("[data-rm]");
       if (rm) { e.stopPropagation(); const favs = S.status.favorites.filter((x) => x !== rm.dataset.rm); api("/api/favorites", { symbols: favs }).then((r) => { S.status.favorites = r.favorites; renderFavs(); }); return; }
       const li = e.target.closest("[data-sym]"); if (li) selectSymbol(li.dataset.sym);
@@ -907,18 +924,63 @@ async function refreshNews() {
     S.news = n; renderNews();
   } catch (e) { $("newsBox").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
 }
+/* News in the Pulse layout: one story per event, the newest headline leads, other outlets under it */
+function ago(iso) {
+  const t = Date.parse(iso), nowIso = S.news && S.news.now, now = nowIso ? Date.parse(nowIso) : Date.now();
+  if (isNaN(t)) return "";
+  const m = Math.max(0, Math.round((now - t) / 60000));
+  if (m < 1) return "just now";
+  if (m < 60) return m + " min ago";
+  const h = m / 60;
+  if (h < 24) { const v = h < 10 ? Math.round(h * 2) / 2 : Math.round(h); return v + (v === 1 ? " hour ago" : " hours ago"); }
+  const d = Math.round(h / 24);
+  return d + (d === 1 ? " day ago" : " days ago");
+}
+function trim(t, n) { t = String(t || "").trim(); return t.length > n ? t.slice(0, n).replace(/\s+\S*$/, "") + "…" : t; }
+function newsStories() {
+  const n = S.news || {};
+  return n.stories || (n.items || []).map((i) => ({ lead: i, related: [], more: 0, words: [], symbols: i.touches || [] }));
+}
+function storyHtml(s, full) {
+  const i = s.lead, imp = i.important || i.kind === "filing", nrel = (s.related || []).length + (s.more || 0);
+  const by = [ago(i.time), i.source].filter(Boolean).map(esc).join(" — ");
+  return `<div class="story">${imp ? '<span class="imp">!</span>' : ""}<a href="${esc(i.link)}" target="_blank" rel="noopener">${esc(i.title)}</a>
+    ${full && i.summary ? `<div class="sum">${esc(trim(i.summary, 220))}</div>` : ""}
+    <div class="by"><span>${by}</span>${!full && nrel ? `<span class="count">+${nrel} more</span>` : ""}${(s.symbols || []).map((x) => `<span class="tag">${esc(x)}</span>`).join("")}${(i.tags || []).map((g) => `<span class="tag">${esc(g)}</span>`).join("")}</div>
+    ${full && nrel ? `<div class="rel">${s.related.map((r) => `<div><a href="${esc(r.link)}" target="_blank" rel="noopener">${esc(r.title)}</a> <span>— ${esc([r.source, ago(r.time)].filter(Boolean).join(", "))}</span></div>`).join("")}${s.more ? `<div><span>+ ${s.more} more on this story</span></div>` : ""}</div>` : ""}</div>`;
+}
+function movesHtml(sym) {
+  return ((S.news || {}).moves || []).filter((m) => m.moving && (!sym || m.ticker === sym)).map((m) => `<div class="mv"><span class="tag">MOVING</span> <b>${esc(m.ticker)}</b> <span class="${cls(m.pct)}">${pct(m.pct)}</span> from yesterday's close ${fmt(m.prev_close)}</div>`).join("");
+}
+/* The panel: the six newest stories, one line of source each. The NEWS view has them all. */
 function renderNews() {
-  const n = S.news; if (!n) return;
-  {
-    const every = (n.items || []).slice(0, 40), items = S.showAllNews ? every : every.slice(0, 10);
-    let html = (n.moves || []).filter((m) => m.moving).map((m) => `<div class="it"><div class="t">MOVING</div><div class="h"><b>${esc(m.ticker)}</b> <span class="${cls(m.pct)}">${pct(m.pct)}</span> from yesterday's close ${fmt(m.prev_close)}</div></div>`).join("");
-    html += items.map((i) => { const t = new Date(i.time); const tt = isNaN(t) ? "" : new Date(t.getTime() + 19800000).toISOString().slice(11, 16);
-      const imp = i.important || (i.tags || []).includes("earnings") && i.kind !== "headline";
-      return `<div class="it"><div class="t">${tt}<br>${esc(i.ticker || (i.touches || [])[0] || "")}</div><div class="h">${imp ? '<span class="imp">!</span>' : ""}<a href="${esc(i.link)}" target="_blank" rel="noopener">${esc(i.title)}</a>
-        <div class="row" style="margin-top:3px;gap:5px"><span class="muted mono" style="font-size:10px">${esc(i.source || "")}</span>${(i.tags || []).map((g) => `<span class="tag">${esc(g)}</span>`).join("")}</div></div></div>`; }).join("");
-    if (every.length > 10) html += `<button class="sm more" data-morenews="1">${S.showAllNews ? "SHOW FEWER" : "SHOW ALL " + every.length + " STORIES"}</button>`;
-    $("newsBox").innerHTML = html || '<div class="empty">Nothing new for your symbols.</div>';
-  }
+  if (!S.news) return;
+  const stories = newsStories();
+  let html = movesHtml() + stories.slice(0, 6).map((s) => storyHtml(s, false)).join("");
+  if (!stories.length) html += '<div class="empty">Nothing new for your symbols.</div>';
+  if (stories.length) html += `<button class="sm more" data-morenews="1">OPEN NEWS · ${stories.length} STORIES ▸</button>`;
+  $("newsBox").innerHTML = html;
+  if (S.newsOpen) renderPulse();
+}
+/* The NEWS view, laid out like Zerodha Pulse: trending words on top, one card per story with its
+   summary, and the other outlets' versions under it. */
+function newsModal() {
+  S.newsOpen = true;
+  openModal(S.status && S.status.demo ? "NEWS · THE DEMO'S SAVED HEADLINES" : "NEWS · LAST 24 HOURS", '<div class="news pulseview" id="pulseBox"></div>', true);
+  renderPulse();
+}
+function renderPulse() {
+  const box = $("pulseBox"); if (!box) return;
+  const n = S.news || {}, stories = newsStories(), f = S.newsFilter;
+  const syms = [...new Set(stories.flatMap((s) => s.symbols || []))].sort();
+  const pick = stories.filter((s) => !f || (f[0] === "$" ? (s.symbols || []).includes(f.slice(1)) : (s.words || []).includes(f)));
+  box.innerHTML = `<div class="chips"><button class="nchip ${f ? "" : "on"}" data-nf="">ALL ${stories.length}</button>` +
+    syms.map((x) => `<button class="nchip sym ${f === "$" + x ? "on" : ""}" data-nf="$${esc(x)}">${esc(x)}</button>`).join("") +
+    (n.trending || []).map(([w]) => `<button class="nchip ${f === w ? "on" : ""}" data-nf="${esc(w)}">${esc(w)}</button>`).join("") + "</div>" +
+    movesHtml(f && f[0] === "$" ? f.slice(1) : null) + `<div class="stories">${pick.map((s) => storyHtml(s, true)).join("")}</div>` +
+    (pick.length ? "" : '<div class="empty">Nothing new for your symbols.</div>') +
+    `<div class="note" style="margin-top:10px">Headlines from Yahoo Finance and NSE filings for your favourites (FYERS' API has no news feed). Stories that share most of their words are grouped; trending words appear in two or more stories.</div>`;
+  box.querySelectorAll("[data-nf]").forEach((c) => c.onclick = () => { S.newsFilter = c.dataset.nf || null; renderPulse(); });
 }
 
 /* ====================================================================== refreshers + actions */
@@ -989,8 +1051,8 @@ function checkAlerts() {
 }
 
 /* ====================================================================== modal + FYERS */
-function openModal(title, html) { $("mTitle").textContent = title; $("mBody").innerHTML = html; $("modal").classList.add("open"); }
-function closeModal() { $("modal").classList.remove("open"); }
+function openModal(title, html, wide) { $("mTitle").textContent = title; $("mBody").innerHTML = html; $("modal").classList.toggle("wide", !!wide); $("modal").classList.add("open"); }
+function closeModal() { $("modal").classList.remove("open"); S.newsOpen = false; }
 function fyersModal() {
   const f = S.status.fyers;
   if (S.status.demo) return openModal("FYERS", `<div class="note">The demo replays saved data and never talks to FYERS. Start the dashboard without <span class="mono">--demo</span> to connect your account.</div>`);

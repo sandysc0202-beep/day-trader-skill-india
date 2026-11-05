@@ -53,6 +53,7 @@ class DemoDashboard(unittest.TestCase):
         self.assertIn(b"NSE<b>//</b>DAYTRADER", page)
         self.assertIn(b"const ranked = rankedHits();", page)          # scanner hits shown best score first
         self.assertIn(b"SCORE CHECK", page)                             # and the check in the backtest window
+        self.assertIn(b"function newsModal()", page)                    # the Pulse-style NEWS view
         code, st = self.call("GET", "/api/status")
         self.assertEqual((st["mode"], st["source"], st["now_ist"]), ("demo", "demo", "2026-10-19 09:50:00"))
         self.assertTrue(st["session"]["open"])
@@ -75,6 +76,14 @@ class DemoDashboard(unittest.TestCase):
             except ValueError:
                 self.httpd.handle_error(None, ("127.0.0.1", 1))
         self.assertIn("a real bug", err.getvalue())         # anything else still shows
+
+    def test_11_news_grouped_into_stories(self):
+        code, n = self.call("GET", "/api/news")
+        self.assertEqual(code, 200)
+        self.assertEqual(sum(1 + len(s["related"]) + s["more"] for s in n["stories"]), len(n["items"]))
+        self.assertLess(len(n["stories"]), len(n["items"]))             # some outlets told the same story
+        self.assertTrue(all(c >= 2 for _, c in n["trending"]))
+        self.assertEqual(n["now"], srv.DEMO["news_now"])                # "2 hours ago" from the news clock
 
     def test_2_only_this_computer(self):
         code, _ = self.call("GET", "/api/status", headers={"Host": "evil.example"})
@@ -217,6 +226,39 @@ if __name__ == "__main__":
         self.assertIn("verdict", r["summary"]["score_check"])
         code, again = self.call("GET", "/api/backtest")
         self.assertEqual(again["summary"]["net"], r["summary"]["net"])
+
+
+class Pulse(unittest.TestCase):
+    """News laid out as stories, like Zerodha Pulse."""
+
+    def item(self, title, t, link=None, sym="RELIANCE", source="Yahoo Finance"):
+        return {"title": title, "time": "2026-11-05T%s:00+00:00" % t, "link": link or "https://x/" + title,
+                "source": source, "touches": [sym], "ticker": sym}
+
+    def test_same_story_from_other_outlets_goes_under_the_newest(self):
+        items = [self.item("Reliance Q2 profit jumps 18% on retail, Jio growth", "08:00"),
+                 self.item("Reliance Industries Q2 profit jumps 18% as Jio, retail grow", "09:00", source="NSE"),
+                 self.item("Infosys wins large deal from European bank", "08:30", sym="INFY"),
+                 self.item("Reliance Q2 profit jumps 18% on retail, Jio growth", "07:00",
+                           link="https://x/Reliance Q2 profit jumps 18% on retail, Jio growth")]   # a repeat
+        d = srv.pulse(items)
+        self.assertEqual(len(d["stories"]), 2)
+        lead = d["stories"][0]
+        self.assertEqual(lead["lead"]["time"][11:16], "09:00")                   # the newest leads
+        self.assertEqual([r["time"][11:16] for r in lead["related"]], ["08:00"])  # the repeat is dropped
+        self.assertEqual(lead["symbols"], ["RELIANCE"])
+        self.assertNotIn("reliance", lead["words"])                              # a ticker is not a word
+        self.assertIn("jio", lead["words"])
+
+    def test_trending_needs_two_stories_and_related_are_capped(self):
+        items = [self.item("HDFC Bank rate cut boosts bank stocks %d" % i, "%02d:00" % (6 + i), sym="HDFCBANK")
+                 for i in range(6)] + [self.item("Nifty rate cut rally", "05:00", sym="NIFTY")]
+        d = srv.pulse(items, related_max=3)
+        top = d["stories"][0]
+        self.assertEqual((len(top["related"]), top["more"]), (3, 2))
+        self.assertIn(["rate", 2], d["trending"])                                # in both stories
+        self.assertNotIn("boosts", [w for w, _ in d["trending"]])                # in one story only
+        self.assertEqual(srv.pulse([]), {"stories": [], "trending": []})
 
 
 class LiveFyers(unittest.TestCase):

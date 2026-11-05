@@ -25,7 +25,7 @@ Then open http://127.0.0.1:8765 (it opens by itself unless `--no-browser`).
 | 04 Time Machine | target first, stop first or neither by flat-by, the past triggers, the verdict in plain words | `timemachine.py run` |
 | 05 Size, Risk, Order | shares and what bound them, PASS or BLOCK with every reason, the ticket, your yes, the fill | `size.py`, `check.py`, `ticket.py` |
 | 06 Positions & Limits | open positions with live P&L and where the price sits between stop and target, trades used today, open risk plus today's losses against your daily limit, today's log | `trader/portfolio.json`, `trader/state/broker.json`; FYERS positions when live |
-| 07 News & NSE filings | headlines and filings for your favourites, today's movers | `news.py` |
+| 07 News & NSE filings | the six newest stories for your favourites, today's movers; **OPEN NEWS** shows them all laid out like Zerodha Pulse: one card per story with its summary, other outlets' versions of the same story grouped under it, "2 hours ago — source", and trending words and symbols to filter by. FYERS' API has no news feed, so headlines come from Yahoo Finance and NSE filings | `news.py` |
 | 08 Journal | every closed trade with P&L and R, win rate, net, the equity curve | the fill log |
 | RESULTS | the quarterly numbers for the symbol on screen | `facts.py` |
 

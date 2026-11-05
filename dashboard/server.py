@@ -173,6 +173,63 @@ class Clock:
 
 # ---------------------------------------------------------------- the app
 
+# ---------------------------------------------------------------- news as stories (the Pulse layout)
+
+NEWS_STOP = set("""a an and are as at be but by for from has have in into is it its of on or over than that the
+their this to up was were will with after amid about new says say said more most what why how who as
+vs via per not no can could may just now all out off our your you his her they them which while when
+stock stocks share shares market markets inc ltd limited co corp company today week year next one two first
+here heres back big top get gets like also amp update updates live""".split())
+
+
+def _news_words(title):
+    w = "".join(ch.lower() if ch.isalnum() else " " for ch in str(title or "")).split()
+    return [x for x in w if len(x) > 2 and x not in NEWS_STOP and not x.isdigit()]
+
+
+def pulse(items, related_max=3, trending_max=8):
+    """Group headlines that tell the same story, the way Zerodha Pulse does: the newest item leads,
+    other outlets' versions sit under it. Two items are one story when they share the same link or
+    at least half the significant words of the shorter title (and three or more of them).
+    Returns {"stories": [{lead, related, more, words, symbols}], "trending": [[word, stories]]}."""
+    stories = []
+    for it in sorted(items or [], key=lambda i: str(i.get("time") or ""), reverse=True):
+        ws = set(_news_words(it.get("title")))
+        home = None
+        for st in stories:
+            if it.get("link") and it.get("link") == st["lead"].get("link"):
+                home = st
+                break
+            common = len(ws & st["_words"])
+            if ws and common >= 3 and common >= 0.5 * min(len(ws), len(st["_words"])):
+                home = st
+                break
+        if home is None:
+            stories.append({"lead": it, "related": [], "_words": ws})
+        elif it.get("link") != home["lead"].get("link") and \
+                all(it.get("link") != r.get("link") for r in home["related"]):
+            home["related"].append(it)
+    count = collections.Counter()
+    for st in stories:
+        words = set(st["_words"])
+        for r in st["related"]:
+            words |= set(_news_words(r.get("title")))
+        syms = set()
+        for i in [st["lead"]] + st["related"]:
+            syms |= {str(x).upper() for x in (i.get("touches") or ([i["ticker"]] if i.get("ticker") else []))}
+        st["symbols"] = sorted(syms)
+        words -= {x.lower() for x in syms}                      # a ticker is a symbol chip, not a word
+        st["words"] = sorted(words)
+        count.update(words)
+    out = []
+    for st in stories:
+        rel = st["related"]
+        out.append({"lead": st["lead"], "related": rel[:related_max], "more": max(0, len(rel) - related_max),
+                    "words": st["words"], "symbols": st["symbols"]})
+    trending = [[w, n] for w, n in sorted(count.items(), key=lambda kv: (-kv[1], kv[0])) if n >= 2][:trending_max]
+    return {"stories": out, "trending": trending}
+
+
 class App:
     def __init__(self, workdir, demo, port):
         self.demo = demo
@@ -704,6 +761,8 @@ class App:
         r = self.run("news", args + ["--all", "--dry-run", "--json"], timeout=240)
         self.panel("news", "demo" if self.demo else ("yahoo" if "FYERS:" in (r["error"] or "") else self.source()))
         data = r["data"] or {"items": [], "moves": [], "notes": [r["error"][-300:]] if r["error"] else []}
+        data.update(pulse(data.get("items")))
+        data["now"] = DEMO["news_now"] if self.demo else utcnow().strftime("%Y-%m-%dT%H:%M:%S+00:00")  # for "2 hours ago"
         self.cache[key] = (time.time(), data)
         return data
 

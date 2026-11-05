@@ -505,6 +505,8 @@ class App:
         finally:
             timer.cancel()
         t.join(5)
+        p.stdout.close()
+        p.stderr.close()
         data = None
         if out:
             try:
@@ -901,6 +903,17 @@ class App:
 
 # ---------------------------------------------------------------- HTTP
 
+class Server(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        """The browser hanging up (a refresh, a closed tab, a cancelled request) is not an error:
+        stay quiet about it and print anything else as before."""
+        if isinstance(sys.exc_info()[1], (ConnectionResetError, BrokenPipeError, ConnectionAbortedError)):
+            return
+        super().handle_error(request, client_address)
+
+
 class Handler(BaseHTTPRequestHandler):
     app = None
     server_version = "DayTraderDashboard/1"
@@ -1089,13 +1102,14 @@ def main(argv=None):
     app = App(workdir, a.demo, a.port)
     Handler.app = app
     try:
-        srv = ThreadingHTTPServer(("127.0.0.1", a.port), Handler)
+        srv = Server(("127.0.0.1", a.port), Handler)
     except OSError as e:
         print("Port %d is already in use: the dashboard is probably still running in another Terminal "
               "window. Press Control+C there, or stop it with:\n    %s\n"
               "then start it again. (Keep port 8765: the FYERS login comes back to that address.)\n(%s)"
-              % (a.port, ("for /f \"tokens=5\" %%p in ('netstat -ano ^| findstr :%d') do taskkill /PID %%p /F"
-                          % a.port) if os.name == "nt" else "lsof -ti :%d | xargs kill" % a.port, e))
+              % (a.port, ("Get-NetTCPConnection -LocalPort %d | ForEach-Object { Stop-Process -Id "
+                          "$_.OwningProcess -Force }   (in PowerShell)" % a.port) if os.name == "nt"
+                 else "lsof -ti :%d | xargs kill" % a.port, e))
         return 1
     srv.daemon_threads = True
     url = "http://127.0.0.1:%d/" % a.port

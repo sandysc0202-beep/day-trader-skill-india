@@ -71,7 +71,8 @@ class Repo(unittest.TestCase):
         with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as fh:
             readme = " ".join(fh.read().split())
         self.assertTrue(readme.startswith("# The Day Trader skill, India edition"))
-        owner = json.load(open(os.path.join(ROOT, ".claude-plugin", "plugin.json")))["repository"].split("/")[3]
+        with open(os.path.join(ROOT, ".claude-plugin", "plugin.json"), encoding="utf-8") as fh:
+            owner = json.load(fh)["repository"].split("/")[3]
         for line in (ABOUT,
                      "https://github.com/%s/day-trader-skill-india install skill" % owner,
                      "/plugin marketplace add %s/day-trader-skill-india" % owner,

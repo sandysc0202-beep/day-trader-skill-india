@@ -20,7 +20,7 @@ class DemoDashboard(unittest.TestCase):
         cls.d = tempfile.mkdtemp()
         cls.app = srv.App(os.path.join(cls.d, "demo"), True, 0)
         srv.Handler.app = cls.app
-        cls.httpd = srv.ThreadingHTTPServer(("127.0.0.1", 0), srv.Handler)
+        cls.httpd = srv.Server(("127.0.0.1", 0), srv.Handler)
         cls.port = cls.httpd.server_address[1]
         threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
 
@@ -57,6 +57,24 @@ class DemoDashboard(unittest.TestCase):
         self.assertEqual((st["mode"], st["source"], st["now_ist"]), ("demo", "demo", "2026-10-19 09:50:00"))
         self.assertTrue(st["session"]["open"])
         self.assertEqual(st["config"]["flat_by"], "15:00")
+
+    def test_10_a_browser_hanging_up_prints_nothing(self):
+        import io
+        import contextlib
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            for e in (ConnectionResetError(54, "Connection reset by peer"), BrokenPipeError(32, "Broken pipe")):
+                try:
+                    raise e
+                except OSError:
+                    self.httpd.handle_error(None, ("127.0.0.1", 1))
+        self.assertEqual(err.getvalue(), "")                # a refresh or a closed tab: quiet
+        with contextlib.redirect_stderr(err):
+            try:
+                raise ValueError("a real bug")
+            except ValueError:
+                self.httpd.handle_error(None, ("127.0.0.1", 1))
+        self.assertIn("a real bug", err.getvalue())         # anything else still shows
 
     def test_2_only_this_computer(self):
         code, _ = self.call("GET", "/api/status", headers={"Host": "evil.example"})

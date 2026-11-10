@@ -237,7 +237,8 @@ def _paper_exit(rec, paths, cfg, now_utc, today, log):
     """Paper: the stop was hit, so record the sell at the stop, as an SL-M would have filled."""
     px = rec["stop"]
     ticket.apply_fill(paths["portfolio"], cfg, rec["symbol"], "sell", rec["qty"], px, today)
-    ticket.log_fill(paths["state"], now_utc, today, rec["symbol"], "sell", rec["qty"], px)
+    ticket.log_fill(paths["state"], now_utc, today, rec["symbol"], "sell", rec["qty"], px,
+                    reason="trail" if rec["stop"] > rec["initial_stop"] else "stop")
     ticket._record(paths["state"], {
         "at": ticket.ist_iso(now_utc), "date": today, "status": "trail-exit", "symbol": rec["symbol"],
         "side": "sell", "qty": ticket._str_num(rec["qty"]), "price": px, "paper": True,

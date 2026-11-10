@@ -458,13 +458,16 @@ def apply_fill(portfolio_path, cfg, symbol, side, qty, price, date):
     return pf
 
 
-def log_fill(state_path, now, today, symbol, side, qty, price):
-    """A fill in the log, so trader-risk can count day trades (a buy and a sell the same day)."""
+def log_fill(state_path, now, today, symbol, side, qty, price, reason=None):
+    """A fill in the log, so trader-risk can count day trades (a buy and a sell the same day).
+    reason: why an automatic exit sold ("flat", "stop", "trail"), as trader-backtest names them."""
     state = load_state(state_path)
-    state.setdefault("orders", []).append({
-        "at": ist_iso(now), "date": today, "status": "filled", "symbol": symbol.upper(), "side": side,
-        "qty": _str_num(float(qty)), "price": float(price),
-        "plain": "%s %s %s at %s" % (side.upper(), _str_num(float(qty)), symbol.upper(), _p(price))})
+    rec = {"at": ist_iso(now), "date": today, "status": "filled", "symbol": symbol.upper(), "side": side,
+           "qty": _str_num(float(qty)), "price": float(price),
+           "plain": "%s %s %s at %s" % (side.upper(), _str_num(float(qty)), symbol.upper(), _p(price))}
+    if reason:
+        rec["reason"] = reason
+    state.setdefault("orders", []).append(rec)
     write_json(state_path, state)
 
 
@@ -576,6 +579,7 @@ def cmd_result(a):
     for k in ("qty", "kind", "max_loss", "stop", "type"):
         if rec.get(k) is not None:
             new[k] = rec[k]
+    new["product"] = str(order.get("product") or "INTRADAY").upper()   # a CNC buy is not closed at flat-by
     if a.broker_id:
         new["broker_order_id"] = a.broker_id
     if a.note:

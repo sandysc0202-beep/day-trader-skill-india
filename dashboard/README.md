@@ -25,7 +25,7 @@ Then open http://127.0.0.1:8765 (it opens by itself unless `--no-browser`).
 | 04 Time Machine | target first, stop first or neither by flat-by, the past triggers, the verdict in plain words | `timemachine.py run` |
 | 05 Size, Risk, Order | shares and what bound them, PASS or BLOCK with every reason, the ticket, your yes, the fill | `size.py`, `check.py`, `ticket.py` |
 | 06 Positions & Limits | open positions with live P&L and where the price sits between stop and target, trades used today, open risk plus today's losses against your daily limit, today's log | `trader/portfolio.json`, `trader/state/broker.json`; FYERS positions when live |
-| 07 News & NSE filings | the six newest stories for your favourites, today's movers; **OPEN NEWS** shows them all laid out like Zerodha Pulse: one card per story with its summary, other outlets' versions of the same story grouped under it, "2 hours ago — source", and trending words and symbols to filter by. FYERS' API has no news feed, so headlines come from Yahoo Finance and NSE filings | `news.py` |
+| 07 News & NSE filings | the six newest stories for your favourites, today's movers; **OPEN NEWS** shows them all laid out like Zerodha Pulse: one card per story with its summary, other outlets' versions of the same story grouped under it, "2 hours ago, source", and trending words and symbols to filter by. FYERS' API has no news feed, so headlines come from Yahoo Finance and NSE filings | `news.py` |
 | 08 Journal | every closed trade with P&L and R, win rate, net, the equity curve | the fill log |
 | RESULTS | the quarterly numbers for the symbol on screen | `facts.py` |
 
@@ -64,6 +64,15 @@ amber TRAIL line. Paper: the exit is recorded when the price reaches the
 stop. Live: your STOP-LOSS order at FYERS is moved up and FYERS sells. It
 runs while the dashboard runs. The BACKTEST window has a "with trailing stop"
 box to compare.
+
+**Paper trades close themselves at flat-by.** Any paper position still open
+at 15:00 (your `flat_by`) is sold at the 15:00 price: the close of the
+5-minute candle that ends at 15:00, or the last price if there is none. It
+happens even if the dashboard was closed at 15:00: the next time it starts,
+anything left open from an earlier day is closed at that day's price and
+counted on that day. The journal marks these "flat 15:00". Live positions are
+left to FYERS, which squares off INTRADAY from 3:05 PM; CNC is never closed.
+In the demo, the **15:05** button on the replay bar jumps past flat-by.
 
 Positions get **FLATTEN** (a market sell ticket, through the risk check and
 your yes again) and, live, **STOP-LOSS** (the SL-M sell from `ticket.py

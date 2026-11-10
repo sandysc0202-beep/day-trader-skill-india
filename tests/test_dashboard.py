@@ -54,10 +54,43 @@ class DemoDashboard(unittest.TestCase):
         self.assertIn(b"const ranked = rankedHits();", page)          # scanner hits shown best score first
         self.assertIn(b"SCORE CHECK", page)                             # and the check in the backtest window
         self.assertIn(b"function newsModal()", page)                    # the Pulse-style NEWS view
+        self.assertIn(b'id="btnFlatby"', page)                          # the demo can jump past flat-by
+        self.assertIn(b"exitLabel(t.reason)", page)                     # "flat 15:00" in the journal
         code, st = self.call("GET", "/api/status")
         self.assertEqual((st["mode"], st["source"], st["now_ist"]), ("demo", "demo", "2026-10-19 09:50:00"))
         self.assertTrue(st["session"]["open"])
         self.assertEqual(st["config"]["flat_by"], "15:00")
+
+    def test_12_paper_trades_close_themselves_at_flat_by(self):
+        self.post("/api/demo/reset")
+        self.post("/api/clock", {"time": "10:10"})
+        self.post("/api/scan", {"wait": True})
+        self.post("/api/entry", {"symbol": "TSLA"})
+        self.post("/api/plan")
+        self.post("/api/size")
+        self.post("/api/risk")
+        self.post("/api/approve", {"index": 1, "reply": "yes"})
+        code, x = self.post("/api/execute", {"index": 1})
+        self.assertTrue(x["ok"], x)
+        self.post("/api/clock", {"time": "14:58"})
+        self.assertEqual(self.app.flat_once(), [])                  # not yet
+        _, book = self.call("GET", "/api/book")
+        self.assertEqual(book["positions"][0]["shares"], 85)
+        self.post("/api/clock", {"time": "15:05"})
+        deadline = srv.time.time() + 5                              # the background loop does it on its own
+        while srv.time.time() < deadline:
+            _, book = self.call("GET", "/api/book")
+            if not book["positions"]:
+                break
+            srv.time.sleep(0.2)
+        self.assertEqual(book["positions"], [])
+        t = book["journal"][-1]
+        _, c = self.call("GET", "/api/chart?symbol=TSLA")
+        self.assertEqual((t["symbol"], t["qty"], t["reason"]), ("TSLA", 85, "flat"))
+        self.assertEqual(t["exit"], round(c["price"], 2))            # no 15:00 candle in the demo: the last price
+        self.assertTrue(any(r["status"] == "flat-exit" for r in book["log"]))
+        self.assertEqual(book["limits"]["at_risk"], 0)
+        self.post("/api/clock", {"time": "09:50"})
 
     def test_10_a_browser_hanging_up_prints_nothing(self):
         import io
@@ -99,7 +132,18 @@ class DemoDashboard(unittest.TestCase):
         self.assertEqual(len(c["bars"]), 7)        # 9:15 to 9:45 closed; the forming bar is not drawn yet
         self.post("/api/clock", {"time": "11:30"})
         _, st = self.call("GET", "/api/status")
-        self.assertEqual(st["now_ist"], "2026-10-19 10:45:00")      # the saved data ends there
+        self.assertEqual(st["now_ist"], "2026-10-19 11:30:00")      # past the saved data, to see flat-by
+        _, c = self.call("GET", "/api/chart?symbol=TSLA")
+        self.assertLessEqual(srv.datetime.datetime.fromtimestamp(c["bars"][-1]["t"], srv.datetime.timezone.utc)
+                             .strftime("%H:%M"), "05:15")               # the candles still end at 10:45
+        self.post("/api/clock", {"time": "16:10"})
+        _, st = self.call("GET", "/api/status")
+        self.assertEqual(st["now_ist"], "2026-10-19 15:30:00")      # no later than the close
+        self.post("/api/clock", {"time": "10:44", "playing": True, "speed": 600})
+        srv.time.sleep(0.3)
+        _, st = self.call("GET", "/api/status")
+        self.assertEqual(st["now_ist"], "2026-10-19 10:45:00")      # play still stops where the data ends
+        self.post("/api/clock", {"time": "09:50", "playing": False, "speed": 10})
 
     def test_4_a_paper_trade_end_to_end(self):
         self.post("/api/demo/reset")

@@ -307,6 +307,7 @@ footer { position: relative; z-index: 2; text-align: center; color: var(--dim); 
   <select id="speed" aria-label="Replay speed"><option value="5">5×</option><option value="10" selected>10×</option><option value="30">30×</option><option value="60">60×</option><option value="180">180×</option></select>
   <input type="range" id="scrub" min="555" max="645" step="1" aria-label="Replay time">
   <span class="mono" id="scrubLbl" style="min-width:42px">09:50</span>
+  <button class="sm ghost" id="btnFlatby" title="Jump the replay to 15:05, after flat-by (no saved charts after 10:45: the last price is used)">15:05</button>
   <button class="sm ghost" id="btnReset" title="Clear the demo's trades and start again">RESET</button>
   <span class="muted" style="font-size:10.5px">saved data: 9:15–10:45</span>
 </div>
@@ -598,7 +599,7 @@ function renderTop() {
   if (open) {
     const c = st.config || {};
     if (m < minutes(c.no_entries_before || "09:30")) ph = "OPENING RANGE FORMING";
-    else if (m >= minutes(c.flat_by || "15:00")) ph = "FLAT-BY PASSED · CLOSE ANY POSITION";
+    else if (m >= minutes(c.flat_by || "15:00")) ph = S.status && S.status.paper ? "FLAT-BY PASSED · PAPER TRADES CLOSED AT " + (c.flat_by || "15:00") : "FLAT-BY PASSED · CLOSE ANY POSITION";
     else if (m >= minutes(c.no_entries_after || "14:45")) ph = "NO NEW ENTRIES · EXITS ONLY";
     else ph = "ENTRY WINDOW OPEN";
   } else if (ses.next_open) ph += " · NEXT " + ses.next_open;
@@ -904,7 +905,7 @@ function renderBook() {
     <div class="stat"><div class="l">Net</div><div class="v ${cls(s.net)}" style="font-size:14px">${inr(s.net, 0)}</div></div></div>
     <canvas id="equity" style="width:100%;height:60px;margin-top:10px"></canvas>`;
   if (b.journal.length) j += `<table style="margin-top:6px"><thead><tr><th>Symbol</th><th>Date</th><th>In → Out</th><th>P&amp;L</th><th>R</th></tr></thead><tbody>` +
-    b.journal.slice(-8).reverse().map((t) => `<tr><td>${esc(t.symbol)}</td><td>${esc(t.date.slice(5))}</td><td>${fmt(t.entry)} → ${fmt(t.exit)}</td><td class="${cls(t.pnl)}">${inr(t.pnl, 0)}</td><td class="${cls(t.r)}">${t.r != null ? fmt(t.r, 2) : "—"}</td></tr>`).join("") + "</tbody></table>";
+    b.journal.slice(-8).reverse().map((t) => `<tr><td>${esc(t.symbol)}</td><td>${esc(t.date.slice(5))}</td><td>${fmt(t.entry)} → ${fmt(t.exit)}${t.reason ? ` <span class="tag" title="${esc(EXIT_WHY[t.reason] || t.reason)}">${esc(exitLabel(t.reason))}</span>` : ""}</td><td class="${cls(t.pnl)}">${inr(t.pnl, 0)}</td><td class="${cls(t.r)}">${t.r != null ? fmt(t.r, 2) : "—"}</td></tr>`).join("") + "</tbody></table>";
   else j += '<div class="empty">Closed trades show here, with P&amp;L and R.</div>';
   $("journalBox").innerHTML = j;
   spark($("equity"), b.equity.length > 1 ? [0].concat(b.equity) : null, "#00e5ff");
@@ -925,6 +926,9 @@ async function refreshNews() {
   } catch (e) { $("newsBox").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
 }
 /* News in the Pulse layout: one story per event, the newest headline leads, other outlets under it */
+/* why an automatic exit sold: the same names as trader-backtest */
+const EXIT_WHY = { flat: "closed at flat-by by the app (paper)", stop: "the stop was hit", trail: "the trailing stop was hit", target: "the target was hit" };
+function exitLabel(r) { return r === "flat" ? "flat " + ((S.status && S.status.config.flat_by) || "15:00") : r; }
 function ago(iso) {
   const t = Date.parse(iso), nowIso = S.news && S.news.now, now = nowIso ? Date.parse(nowIso) : Date.now();
   if (isNaN(t)) return "";
@@ -1046,7 +1050,8 @@ function checkAlerts() {
     if (p.stop && px && px <= p.stop) fire("stop", `🔻 ${p.symbol} at ${fmt(px)}: at or under the stop ${fmt(p.stop)}. ${st.paper ? "Paper: FLATTEN to record the exit." : "The SL-M stop at FYERS should be filling: check positions."}`, "bad");
     if (p.target && px && px >= p.target) fire("tgt", `🎯 ${p.symbol} at ${fmt(px)}: target ${fmt(p.target)} reached. Nothing sold it: FLATTEN if you want out (cancel the stop first).`, "good");
     if (t >= fb - 10 && t < fb) fire("fb10", `⏱ ${p.symbol}: flat-by ${st.config.flat_by} in ${fb - t} min.`, "warn");
-    if (t >= fb) fire("fb", `⏱ Flat-by time: close ${p.symbol} now. FYERS squares off INTRADAY from 3:05 PM with a charge.`, "bad");
+    if (t >= fb) fire("fb", st.paper ? `⏱ Flat-by: the app is closing ${p.symbol} at the ${st.config.flat_by || "15:00"} price (paper).`
+      : `⏱ Flat-by time: close ${p.symbol} now. FYERS squares off INTRADAY from 3:05 PM with a charge.`, "bad");
   }
 }
 
@@ -1188,6 +1193,7 @@ async function boot() {
   $("favForm").onsubmit = async (e) => { e.preventDefault(); const s = $("favInput").value.trim().toUpperCase(); if (!s) return;
     const favs = (S.status.favorites || []).concat([s]); const r = await api("/api/favorites", { symbols: favs }); S.status.favorites = r.favorites; $("favInput").value = ""; renderFavs(); };
   $("btnPlay").onclick = async () => { S.status = await api("/api/clock", { playing: !S.status.clock.playing }); renderTop(); };
+  $("btnFlatby").onclick = async () => { S.status = await api("/api/clock", { time: "15:05", playing: false }); renderTop(); loadChart(); refreshBook(); };
   $("speed").onchange = async (e) => { S.status = await api("/api/clock", { speed: Number(e.target.value) }); };
   $("scrub").oninput = (e) => { S.scrubbing = true; const m = Number(e.target.value); $("scrubLbl").textContent = String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0"); };
   $("scrub").onchange = async (e) => { const m = Number(e.target.value); S.status = await api("/api/clock", { time: Math.floor(m / 60) + ":" + (m % 60) }); S.scrubbing = false; renderTop(); loadChart(); refreshBook(); };

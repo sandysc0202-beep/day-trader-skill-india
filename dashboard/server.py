@@ -61,6 +61,7 @@ TOOLS = {
 UTF8 = {"PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
 DEMO_DAY = datetime.date(2026, 10, 19)
 DEMO_END = datetime.time(10, 45)           # the saved charts run to 10:05 (TSLA to 10:43)
+DEMO_CLOSE = datetime.time(15, 30)         # the clock can be set up to the close, to see flat-by
 DEMO_SCAN_END = "10:05"
 DEMO = {
     "wall": os.path.join(FIX, "trader-scanner", "wall5m-2026-10-19.json.gz"),
@@ -86,6 +87,7 @@ def load_module(folder, name):
 alerts_mod = load_module("trader-alerts", "alerts")
 sys.path.insert(0, os.path.join(ROOT, "trader-broker"))
 import trail as trail_mod  # noqa: E402  (trader-broker/trail.py: the trailing stop)
+import flat as flat_mod    # noqa: E402  (trader-broker/flat.py: paper trades closed at flat-by)
 scan_mod = load_module("trader-scanner", "scan")
 fyers = load_module("trader-broker", "fyers_api")
 
@@ -136,10 +138,14 @@ class Clock:
         with self.lock:
             now = time.monotonic()
             if self.playing:
+                was = self.sim
                 self.sim += datetime.timedelta(seconds=(now - self._last) * self.speed)
                 end = datetime.datetime.combine(DEMO_DAY, DEMO_END)
-                if self.sim >= end:
+                if was < end <= self.sim:              # the saved charts end here: stop the replay
                     self.sim, self.playing = end, False
+                close = datetime.datetime.combine(DEMO_DAY, DEMO_CLOSE)
+                if self.sim >= close:
+                    self.sim, self.playing = close, False
             self._last = now
             return self.sim.replace(microsecond=0)
 
@@ -153,7 +159,7 @@ class Clock:
                 h, m = [int(x) for x in hhmm.split(":")[:2]]
                 t = datetime.datetime.combine(DEMO_DAY, datetime.time(h, m))
                 lo = datetime.datetime.combine(DEMO_DAY, datetime.time(9, 0))
-                hi = datetime.datetime.combine(DEMO_DAY, DEMO_END)
+                hi = datetime.datetime.combine(DEMO_DAY, DEMO_CLOSE)   # past 10:45 on purpose: flat-by
                 self.sim = min(max(t, lo), hi)
             if playing is not None:
                 self.playing = bool(playing)
@@ -261,12 +267,30 @@ class App:
                 price_for=lambda s: self.chart(s)["price"],
                 log=lambda m: self.trail_log.append(m) or self.trail_log.__delitem__(slice(0, -50)))
 
+    def flat_once(self):
+        """Paper trades still open at flat-by (today's, or left open from an earlier day) are sold at
+        that day's 15:00 price (trader-broker/flat.py). Runs on its own, trailing stop on or off."""
+        cfg = self.config()
+        if not cfg.get("paper", True):
+            return []
+        today = self.clock.ist().date()
+
+        def bars_for(sym, day):
+            if day == today or self.demo:
+                return self.chart(sym)["bars"]
+            return self.chart(sym, rng="5d" if (today - day).days <= 4 else "1mo")["bars"]
+        with self.lock:
+            return flat_mod.check(
+                cfg, self.clock.utc(), bars_for, price_for=lambda s: self.chart(s)["price"],
+                log=lambda m: self.trail_log.append(m) or self.trail_log.__delitem__(slice(0, -50)))
+
     def _trail_loop(self):
         while True:
-            try:
-                self.trail_once()
-            except Exception as e:                   # never stop the loop: say it and try again
-                self.trail_log.append("trail: %s" % e)
+            for step, name in ((self.flat_once, "flat"), (self.trail_once, "trail")):
+                try:
+                    step()
+                except Exception as e:               # never stop the loop: say it and try again
+                    self.trail_log.append("%s: %s" % (name, e))
             time.sleep(1.0 if self.demo else 5.0)
 
     def settings(self, body):
@@ -879,6 +903,7 @@ class App:
             if r.get("status") != "filled":
                 continue
             sym, qty, price = r.get("symbol"), float(r.get("qty") or 0), float(r.get("price") or 0)
+            reason = r.get("reason")
             day = str(r.get("date") or str(r.get("at", ""))[:10])
             if r.get("side") == "buy":
                 lots[sym].append([qty, price, day, r.get("at")])
@@ -899,6 +924,7 @@ class App:
                 risk = risk_by.get((sym, opened[2]))
                 trades.append({"symbol": sym, "date": day, "qty": qty, "entry": round(cost / max(qty, 1e-9), 2),
                                "exit": price, "pnl": round(pnl, 2), "opened": opened[3], "closed": r.get("at"),
+                               "reason": reason,
                                "r": round(pnl / risk, 2) if risk else None})
         return trades
 

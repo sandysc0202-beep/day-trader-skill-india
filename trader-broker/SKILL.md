@@ -215,6 +215,16 @@ it on past data first: `/trader-backtest` with `--trail`.
 4. FYERS squares off open INTRADAY positions itself from 3:05 PM for stocks
    that have F&O contracts (3:20 PM for the rest), and charges for it. Being
    flat by 15:00 avoids that.
+5. **Paper closes itself.** With `"paper": true` there is no broker to square
+   off, so `flat.py` does: every open paper INTRADAY position that is past
+   `flat_by` is sold at that day's 15:00 price (the close of the 5-minute
+   candle that ends at 15:00; the last price if there is none). A position
+   left open from an earlier day is closed at that day's price and dated that
+   day, so it never counts against today's limits. The fill is logged with
+   reason `flat`, the backtest's name for this exit, and the journal shows
+   "flat 15:00". It never touches a live account or a CNC position. The
+   dashboard runs it every few seconds and when it starts; from a terminal:
+   `python3 "${CLAUDE_SKILL_DIR}/flat.py" check`.
 
 ## Example: the worked day in the tests
 

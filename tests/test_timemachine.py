@@ -1,4 +1,3 @@
-import copy
 import gzip
 import hashlib
 import io

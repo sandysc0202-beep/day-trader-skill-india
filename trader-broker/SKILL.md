@@ -188,8 +188,10 @@ Paper: when the price reaches the stop, the exit is recorded as a paper sell
 at the stop (`trail-exit` in the log). Live: the SL-M stop-loss order at
 FYERS from `protect` is moved up (FYERS' modify order), so FYERS does the
 selling, even with this computer asleep, and the fill is recorded when FYERS
-reports it. Without that order at FYERS there is nothing to move: run
-`protect` first. The app never sends a second sell for the same shares. The
+reports it. If FYERS does not take a move (no answer, or an error), its
+stop-loss is still at the lower price: the position's note says so and the
+move is asked again on every look until FYERS takes it. Without that order at
+FYERS there is nothing to move: run `protect` first. The app never sends a second sell for the same shares. The
 dashboard checks every 5 seconds while it runs; without it, `python3
 trail.py check` does one pass and `trail.py show` lists every move. Compare
 it on past data first: `/trader-backtest` with `--trail`.
@@ -222,7 +224,9 @@ it on past data first: `/trader-backtest` with `--trail`.
    left open from an earlier day is closed at that day's price and dated that
    day, so it never counts against today's limits. The fill is logged with
    reason `flat`, the backtest's name for this exit, and the journal shows
-   "flat 15:00". It never touches a live account or a CNC position. The
+   "flat 15:00". A feed that is only late (Yahoo, about 15 minutes) is
+   waited for, up to 30 minutes, so the price is 15:00's. It never touches a
+   live account or a CNC position. The
    dashboard runs it every few seconds and when it starts; from a terminal:
    `python3 "${CLAUDE_SKILL_DIR}/flat.py" check`.
 

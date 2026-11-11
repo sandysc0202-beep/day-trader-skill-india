@@ -174,6 +174,33 @@ class Live(Workdir):
         self.assertIsNone(trail.ticket.open_stop_id({"orders": self.state()}, "X", DAY.isoformat()))
 
 
+    def test_a_move_fyers_did_not_take_is_tried_again_until_it_does(self):
+        self.orders.append({"at": "2026-11-03T10:01:00+05:30", "date": DAY.isoformat(), "status": "placed",
+                            "symbol": "X", "side": "sell", "type": "stop", "broker_order_id": "SL1", "kind": "exit"})
+        self.write_state()
+        self.bars = [bar("10:00", 100, 105.5, 99, 105)]
+        self.price = 105
+        tries = []
+
+        def down(oid, px):
+            tries.append(px)
+            raise trail.fyers_api.FyersError("could not reach FYERS (timed out)")
+        doc = self.look("10:06", live_ops=dict(self.ops, modify=down))
+        self.assertEqual((doc["X"]["stop"], tries), (100, [100]))        # ours moved, FYERS' did not
+        self.assertIn("trying again", doc["X"]["note"])
+        doc = self.look("10:07", live_ops=dict(self.ops, modify=down))   # no new move, but still asked
+        self.assertEqual(tries, [100, 100])
+        doc = self.look("10:08", live_ops=self.ops)                      # FYERS is back
+        self.assertEqual(self.modified, [("SL1", 100)])
+        self.assertEqual((doc["X"]["broker_stop"], doc["X"]["note"]), (100, None))
+        self.look("10:09", live_ops=self.ops)
+        self.assertEqual(self.modified, [("SL1", 100)])                  # and not asked again once taken
+        self.book = [{"id": "SL1", "status_word": "filled", "filledQty": 10, "tradedPrice": 100.0}]
+        self.look("10:11", live_ops=self.ops)
+        sell = [r for r in self.state() if r["status"] == "filled" and r["side"] == "sell"][0]
+        self.assertEqual(sell["reason"], "trail")                        # the journal's exit reason, live too
+
+
 class Backtest(unittest.TestCase):
     """--trail: the same rules, candle by candle."""
 

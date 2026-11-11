@@ -262,16 +262,21 @@ def _live_follow(rec, moves, bstate, today, ops, paths, cfg, now_utc, log):
         return
     rec["note"] = None
     rec["broker_stop_id"] = stop_id
-    if moves:
+    if moves or rec.get("move_pending"):
+        # move_pending: FYERS did not take the last move, so its stop-loss is still lower than
+        # ours. Ask again on every look until it does, not only when the stop moves once more.
         try:
             ops["modify"](stop_id, rec["stop"])
             rec["broker_stop"] = rec["stop"]
+            rec["move_pending"] = False
             ticket._record(paths["state"], {
                 "at": ticket.ist_iso(now_utc), "date": today, "status": "stop-moved", "symbol": rec["symbol"],
                 "broker_order_id": stop_id, "price": rec["stop"],
                 "plain": "trailing stop: FYERS stop-loss %s moved to %s" % (stop_id, ticket._p(rec["stop"]))})
         except fyers_api.FyersError as e:
-            rec["note"] = "FYERS did not move the stop to %.2f: %s" % (rec["stop"], e)
+            rec["move_pending"] = True
+            rec["note"] = ("FYERS did not move the stop to %.2f (its stop-loss is still lower; trying again): %s"
+                           % (rec["stop"], e))
             log("trail: %s: %s" % (rec["symbol"], rec["note"]))
     try:
         book = ops["orderbook"]()
@@ -281,7 +286,8 @@ def _live_follow(rec, moves, bstate, today, ops, paths, cfg, now_utc, log):
     if row and row.get("status_word") == "filled" and row.get("tradedPrice"):
         qty, px = row.get("filledQty") or rec["qty"], float(row["tradedPrice"])
         ticket.apply_fill(paths["portfolio"], cfg, rec["symbol"], "sell", qty, px, today)
-        ticket.log_fill(paths["state"], now_utc, today, rec["symbol"], "sell", qty, px)
+        ticket.log_fill(paths["state"], now_utc, today, rec["symbol"], "sell", qty, px,
+                        reason="trail" if rec["stop"] > rec["initial_stop"] else "stop")
         ticket._record(paths["state"], {
             "at": ticket.ist_iso(now_utc), "date": today, "status": "stop-filled", "symbol": rec["symbol"],
             "broker_order_id": stop_id, "price": px,

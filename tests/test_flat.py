@@ -111,6 +111,22 @@ class FlatBy(Book):
         exits, _ = self.run_at("15:05")                                # and only once
         self.assertEqual(exits, [])
 
+    def test_a_feed_that_is_only_late_is_waited_for(self):
+        self.buy()
+        late = bars(upto="14:45")                                     # Yahoo at 15:02: about 15 minutes behind
+        exits, _ = self.run_at("15:02", the_bars=late)
+        self.assertEqual(exits, [])                                   # not 14:45's price: wait for 15:00's
+        self.assertEqual(self.portfolio()["positions"][0]["shares"], 10)
+        exits, _ = self.run_at("15:16", the_bars=bars(upto="14:55"))  # the candle arrived
+        self.assertEqual((exits[0]["price"], exits[0]["how"]), (close_at("14:55"), "15:00 candle"))
+
+    def test_the_wait_for_a_late_feed_ends_after_30_minutes(self):
+        self.buy()
+        exits, _ = self.run_at("15:20", the_bars=bars(upto="14:50"))  # newest candle 25 minutes old: late
+        self.assertEqual(exits, [])
+        exits, _ = self.run_at("15:31", the_bars=bars(upto="14:50"))  # it never came: the last price
+        self.assertEqual((exits[0]["price"], exits[0]["how"]), (123.45, "last price"))
+
     def test_a_position_left_open_from_an_earlier_day_closes_at_that_days_price(self):
         friday = DAY - datetime.timedelta(days=3)
         self.buy(day=friday, price=90)

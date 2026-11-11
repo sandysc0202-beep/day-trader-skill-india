@@ -297,7 +297,7 @@ footer { position: relative; z-index: 2; text-align: center; color: var(--dim); 
       <span class="chip" id="chipMode"><span class="dot"></span>MODE</span>
       <span class="chip" id="chipData"><span class="dot"></span>DATA</span>
       <button class="sm" id="btnFyers" title="FYERS connection">FYERS</button>
-      <div class="pnlbox"><div class="lbl">DAY P&amp;L</div><div class="val mono" id="dayPnl">₹0</div></div>
+      <div class="pnlbox" id="dayPnlBox" title="After FYERS charges"><div class="lbl">DAY P&amp;L · NET</div><div class="val mono" id="dayPnl">₹0</div></div>
     </div>
   </header>
 
@@ -875,7 +875,9 @@ function renderBook() {
   const b = S.book; if (!b) return;
   if (S.status && S.status.config) $("trailOn").checked = !!S.status.config.trailing_stop;
   $("dayPnl").textContent = inr(b.day_pnl); $("dayPnl").className = "val mono " + cls(b.day_pnl);
-  $("cashLine").textContent = "cash " + inr(b.cash, 0);
+  $("dayPnlBox").title = `After FYERS charges (estimated, the backtest's rates): ${inr(b.day_pnl_gross)} before charges, ${inr(b.charges_today)} charges. Open positions count what closing them now would cost.`;
+  $("cashLine").textContent = "cash " + inr(b.cash_after_charges != null ? b.cash_after_charges : b.cash, 0);
+  $("cashLine").title = b.stats && b.stats.charges ? `${inr(b.cash)} from the fills, less ${inr(b.stats.charges)} of charges on closed trades` : "";
   const L = b.limits || {};
   const bar = (v, max, hot) => `<div class="bar ${hot ? "hot" : ""}"><i style="width:${max ? Math.min(100, 100 * v / max) : 0}%"></i></div>`;
   let html = `<div class="stat3" style="grid-template-columns:1fr 1fr">
@@ -890,7 +892,7 @@ function renderBook() {
         if (p.stop && p.target && p.price) { const f = Math.max(0, Math.min(1, (p.price - p.stop) / (p.target - p.stop)));
           prog = `<div class="bar" style="margin-top:4px;width:110px"><i style="width:${f * 100}%;background:linear-gradient(90deg,#ff3d71,#ffb020,#2bff9a)"></i></div><div class="muted" style="font-size:9.5px">stop ${fmt(p.stop)} → tgt ${fmt(p.target)}</div>`; }
         return `<tr><td>${esc(p.symbol)}</td><td>${p.shares}</td><td>${fmt(p.avg)}</td><td>${fmt(p.price)}</td>
-          <td class="${cls(p.pnl)}">${inr(p.pnl)}<br><span style="font-size:10px">${pct(p.pnl_pct)}</span>${prog}${trailInfo}</td>
+          <td class="${cls(p.pnl)}" title="${p.charges_est != null ? `After about ${inr(p.charges_est)} of charges if closed now: ${inr(p.pnl_net)}` : ""}">${inr(p.pnl)}<br><span style="font-size:10px">${pct(p.pnl_pct)}</span>${prog}${trailInfo}</td>
           <td style="text-align:right">${!S.status.paper ? `<button class="sm" data-protect="${esc(p.symbol)}">STOP-LOSS</button> ` : ""}<button class="sm danger" data-flatten="${esc(p.symbol)}">FLATTEN</button></td></tr>`;
       }).join("") + "</tbody></table>";
   } else html += '<div class="empty" style="margin-top:8px">No open positions.</div>';
@@ -902,10 +904,10 @@ function renderBook() {
   const s = b.stats || {};
   let j = `<div class="stat3"><div class="stat"><div class="l">Trades</div><div class="v">${s.trades || 0}</div></div>
     <div class="stat"><div class="l">Win rate</div><div class="v">${s.win_rate != null ? s.win_rate + "%" : "—"}</div></div>
-    <div class="stat"><div class="l">Net</div><div class="v ${cls(s.net)}" style="font-size:14px">${inr(s.net, 0)}</div></div></div>
+    <div class="stat" title="After FYERS charges, like the backtest: ${inr(s.gross)} before charges, ${inr(s.charges)} charges"><div class="l">Net after charges</div><div class="v ${cls(s.net)}" style="font-size:14px">${inr(s.net, 0)}</div></div></div>
     <canvas id="equity" style="width:100%;height:60px;margin-top:10px"></canvas>`;
-  if (b.journal.length) j += `<table style="margin-top:6px"><thead><tr><th>Symbol</th><th>Date</th><th>In → Out</th><th>P&amp;L</th><th>R</th></tr></thead><tbody>` +
-    b.journal.slice(-8).reverse().map((t) => `<tr><td>${esc(t.symbol)}</td><td>${esc(t.date.slice(5))}</td><td>${fmt(t.entry)} → ${fmt(t.exit)}${t.reason ? ` <span class="tag" title="${esc(EXIT_WHY[t.reason] || t.reason)}">${esc(exitLabel(t.reason))}</span>` : ""}</td><td class="${cls(t.pnl)}">${inr(t.pnl, 0)}</td><td class="${cls(t.r)}">${t.r != null ? fmt(t.r, 2) : "—"}</td></tr>`).join("") + "</tbody></table>";
+  if (b.journal.length) j += `<table style="margin-top:6px"><thead><tr><th>Symbol</th><th>Date</th><th>In → Out</th><th>Net P&amp;L</th><th>R</th></tr></thead><tbody>` +
+    b.journal.slice(-8).reverse().map((t) => `<tr><td>${esc(t.symbol)}</td><td>${esc(t.date.slice(5))}</td><td>${fmt(t.entry)} → ${fmt(t.exit)}${t.reason ? ` <span class="tag" title="${esc(EXIT_WHY[t.reason] || t.reason)}">${esc(exitLabel(t.reason))}</span>` : ""}</td><td class="${cls(t.pnl)}" title="${t.charges != null ? `${inr(t.gross)} before charges, ${inr(t.charges)} charges` : "Held overnight (delivery): charges not estimated"}">${inr(t.pnl, 0)}${t.charges != null ? `<br><span class="muted" style="font-size:10px">chg ${inr(t.charges, 0)}</span>` : ""}</td><td class="${cls(t.r)}">${t.r != null ? fmt(t.r, 2) : "—"}</td></tr>`).join("") + "</tbody></table>";
   else j += '<div class="empty">Closed trades show here, with P&amp;L and R.</div>';
   $("journalBox").innerHTML = j;
   spark($("equity"), b.equity.length > 1 ? [0].concat(b.equity) : null, "#00e5ff");

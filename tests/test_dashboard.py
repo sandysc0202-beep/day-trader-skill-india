@@ -56,6 +56,7 @@ class DemoDashboard(unittest.TestCase):
         self.assertIn(b"function newsModal()", page)                    # the Pulse-style NEWS view
         self.assertIn(b'id="btnFlatby"', page)                          # the demo can jump past flat-by
         self.assertIn(b"exitLabel(t.reason)", page)                     # "flat 15:00" in the journal
+        self.assertIn(b"Net after charges", page)                       # P&L after FYERS' charges
         code, st = self.call("GET", "/api/status")
         self.assertEqual((st["mode"], st["source"], st["now_ist"]), ("demo", "demo", "2026-10-19 09:50:00"))
         self.assertTrue(st["session"]["open"])
@@ -91,6 +92,20 @@ class DemoDashboard(unittest.TestCase):
         self.assertTrue(any(r["status"] == "flat-exit" for r in book["log"]))
         self.assertEqual(book["limits"]["at_risk"], 0)
         self.post("/api/clock", {"time": "09:50"})
+
+    def test_13_one_writer_at_a_time_for_the_books(self):
+        import threading
+        done = []
+        with self.app.book_lock:                                    # a ticket tool is writing the fill log
+            t = threading.Thread(target=lambda: done.append(self.app.flat_once()))
+            t.start()
+            t.join(0.4)
+            self.assertEqual(done, [])                              # the flat-by check waits its turn
+        t.join(5)
+        self.assertEqual(len(done), 1)
+        before = dict(os.environ)
+        self.app.yahoo_quotes([])                                   # the Yahoo backup changes nothing global
+        self.assertEqual(dict(os.environ), before)
 
     def test_10_a_browser_hanging_up_prints_nothing(self):
         import io
@@ -177,6 +192,9 @@ class DemoDashboard(unittest.TestCase):
         code, book = self.call("GET", "/api/book")
         self.assertEqual(book["positions"][0]["shares"], 85)
         self.assertEqual(book["limits"]["at_risk"], 499.8)
+        pos = book["positions"][0]                                  # open: what closing now would cost
+        self.assertGreater(pos["charges_est"], 0)
+        self.assertAlmostEqual(book["day_pnl"], pos["pnl"] - pos["charges_est"], places=2)
 
         self.post("/api/clock", {"time": "10:40"})
         code, f = self.post("/api/flatten", {"symbol": "TSLA"})
@@ -190,6 +208,13 @@ class DemoDashboard(unittest.TestCase):
         self.assertEqual(book["journal"][0]["qty"], 85)
         self.assertEqual(book["limits"]["at_risk"], 0)
         self.assertAlmostEqual(book["day_pnl"], book["journal"][0]["pnl"], places=2)
+        t = book["journal"][0]                                      # the day P&L is after charges
+        self.assertEqual(t["charges"], srv.bt_mod.charges(85 * t["entry"], 85 * t["exit"])["total"])
+        self.assertAlmostEqual(t["pnl"], t["gross"] - t["charges"], places=2)
+        self.assertAlmostEqual(book["day_pnl_gross"] - book["charges_today"], book["day_pnl"], places=2)
+        self.assertEqual(book["stats"]["charges"], t["charges"])
+        self.assertAlmostEqual(book["cash_after_charges"], book["cash"] - t["charges"], places=2)
+        self.assertEqual(book["limits"]["loss_today"], round(max(0.0, -t["pnl"]), 2))
 
     def test_5_news_results_and_favourites(self):
         code, n = self.call("GET", "/api/news")
@@ -270,6 +295,50 @@ if __name__ == "__main__":
         self.assertIn("verdict", r["summary"]["score_check"])
         code, again = self.call("GET", "/api/backtest")
         self.assertEqual(again["summary"]["net"], r["summary"]["net"])
+
+
+class Charges(unittest.TestCase):
+    """Paper and live P&L after FYERS' charges, the way the backtest counts them."""
+
+    def fills(self, *rows, entry_loss=500):
+        orders = [{"status": "paper", "kind": "entry", "symbol": "SBIN", "date": "2026-11-10", "side": "buy",
+                   "max_loss": entry_loss}]
+        for side, qty, price, day in rows:
+            orders.append({"status": "filled", "symbol": "SBIN", "side": side, "qty": str(qty), "price": price,
+                           "date": day, "at": day + "T10:00:00+05:30"})
+        return {"orders": orders}
+
+    def test_one_round_trip_matches_the_backtest_to_the_paisa(self):
+        bt = srv.bt_mod
+        for prime in (False, True):
+            for qty, buy, sell in ((100, 800.0, 806.0), (10, 245.5, 243.0), (400, 1200.0, 1215.0)):
+                st = self.fills(("buy", qty, buy, "2026-11-10"), ("sell", qty, sell, "2026-11-10"))
+                t = srv.App.journal(None, st, prime)[0]
+                want = bt.charges(qty * buy, qty * sell, prime)
+                self.assertEqual(t["charge_parts"], want)
+                self.assertEqual(t["gross"], round(qty * (sell - buy), 2))
+                self.assertEqual(t["pnl"], round(qty * (sell - buy) - want["total"], 2))
+                self.assertEqual(t["r"], round(t["pnl"] / 500, 2))            # net R, as the backtest reports
+                self.assertEqual(t["r_gross"], round(t["gross"] / 500, 2))
+
+    def test_a_small_win_can_be_a_loss_after_charges(self):
+        st = self.fills(("buy", 100, 800.0, "2026-11-10"), ("sell", 100, 800.3, "2026-11-10"))
+        t = srv.App.journal(None, st)[0]
+        self.assertEqual(t["gross"], 30.0)
+        self.assertGreater(t["charges"], 30.0)                               # about 79 rupees on 1.6 lakh turnover
+        self.assertLess(t["pnl"], 0)
+
+    def test_a_buy_closed_by_two_sells_pays_its_brokerage_once(self):
+        st = self.fills(("buy", 100, 800.0, "2026-11-10"), ("sell", 40, 805.0, "2026-11-10"),
+                        ("sell", 60, 810.0, "2026-11-10"))
+        a, b = srv.App.journal(None, st, True)                               # Prime: 15 an order
+        self.assertEqual(round(a["charge_parts"]["brokerage"] + b["charge_parts"]["brokerage"], 2), 45.0)
+        self.assertEqual(a["charge_parts"]["brokerage"], 21.0)               # 40% of the buy's 15, plus its own 15
+
+    def test_a_trade_held_overnight_is_not_given_intraday_charges(self):
+        st = self.fills(("buy", 10, 800.0, "2026-11-10"), ("sell", 10, 820.0, "2026-11-11"))
+        t = srv.App.journal(None, st)[0]
+        self.assertEqual((t["charges"], t["pnl"], t["gross"]), (None, 200.0, 200.0))
 
 
 class Pulse(unittest.TestCase):

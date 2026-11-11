@@ -130,11 +130,11 @@ def write_json(path, data):
     d = os.path.dirname(path)
     if d:
         os.makedirs(d, exist_ok=True)
-    tmp = path + ".tmp"
+    tmp = "%s.%d.tmp" % (path, os.getpid())      # one temp file per program: two writers never share it
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=2)
         fh.write("\n")
-    os.replace(tmp, path)
+    fyers_api.replace_file(tmp, path)            # waits out Windows when the dashboard is reading the file
 
 
 def rec_day(rec):
@@ -716,7 +716,7 @@ def cmd_place(a):
     except fyers_api.FyersError as e:
         raise TicketError("order %d cannot go to FYERS: %s; nothing was sent" % (a.index, e))
     base = {"date": today, "index": a.index, "fingerprint": fp, "symbol": rec["symbol"], "side": rec["side"],
-            "plain": rec["plain"]}
+            "plain": rec["plain"], "product": body["productType"]}
     for k in ("qty", "kind", "max_loss", "stop", "type"):
         if rec.get(k) is not None:
             base[k] = rec[k]
@@ -724,7 +724,13 @@ def cmd_place(a):
         res = PLACE(body)
     except fyers_api.FyersError as e:
         _record(a.state, dict(base, at=ist_iso(now), status="failed", note=str(e)))
-        print("FYERS refused order %d: %s. Recorded as failed." % (a.index, e))
+        if "could not reach FYERS" in str(e):
+            # no answer is not a no: the order may have arrived before the connection dropped
+            print("No answer from FYERS for order %d: %s. Recorded as failed; your yes is used up." % (a.index, e))
+            print("It MAY still have reached FYERS: check fyers_api.py orders and fyers_api.py positions "
+                  "before anything else. This exact order is not sent again today.")
+        else:
+            print("FYERS refused order %d: %s. Recorded as failed." % (a.index, e))
         return 1
     bid = res.get("id") or ""
     _record(a.state, dict(base, at=ist_iso(now), status="placed", broker_order_id=bid,

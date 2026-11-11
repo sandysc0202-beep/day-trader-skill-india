@@ -423,5 +423,72 @@ class Bridge(Base):
         self.assertIsNone(entry.fyers_bridge())
 
 
+class Hardening(Base):
+    """What the code review fixed."""
+
+    def test_a_reply_cut_off_half_way_is_a_fyers_error_not_a_crash(self):
+        import http.client
+        self.token(fy.token_day(fy.ist_now()))
+        for boom in (http.client.IncompleteRead(b"{"), http.client.RemoteDisconnected("closed"),
+                     http.client.BadStatusLine("")):
+            def cut(req, timeout=20, boom=boom):
+                raise boom
+            fy._urlopen = cut
+            with self.assertRaises(fy.FyersError) as e:      # ticket.py place catches this and uses up the yes
+                fy.place_order({"symbol": "NSE:SBIN-EQ", "qty": 1})
+            self.assertIn("could not reach FYERS", str(e.exception))
+
+    def test_a_forced_source_stays_in_its_own_thread_and_always_undoes_itself(self):
+        import threading
+        self.token(fy.token_day(fy.ist_now()))
+        self.assertEqual(fy.data_source(), "fyers")
+        seen, inside, go = {}, threading.Event(), threading.Event()
+
+        def other():
+            inside.wait(2)
+            seen["other"] = fy.data_source()                 # another request, at the same moment
+            go.set()
+        t = threading.Thread(target=other)
+        t.start()
+        with fy.forced_source("yahoo"):
+            self.assertEqual(fy.data_source(), "yahoo")
+            with fy.forced_source("yahoo"):                  # two that overlap: the old bug's recipe
+                inside.set()
+                go.wait(2)
+            self.assertEqual(fy.data_source(), "yahoo")
+        t.join()
+        self.assertEqual(seen["other"], "fyers")
+        self.assertEqual(fy.data_source(), "fyers")          # not stuck on Yahoo
+        self.assertNotIn("TRADER_DATA_SOURCE", os.environ)
+        try:
+            with fy.forced_source("yahoo"):
+                raise RuntimeError("Yahoo down")
+        except RuntimeError:
+            pass
+        self.assertEqual(fy.data_source(), "fyers")
+
+    def test_a_file_swap_waits_out_windows(self):
+        real, tries = fy.os.replace, []
+
+        def busy(tmp, path):                                 # Windows: the dashboard has the file open
+            tries.append(1)
+            if len(tries) < 4:
+                raise PermissionError(13, "The process cannot access the file")
+            return real(tmp, path)
+        fy.os.replace = busy
+        try:
+            fy._write(os.path.join("trader", "state", "x.json"), {"ok": 1})
+            self.assertEqual(len(tries), 4)
+            with open(os.path.join("trader", "state", "x.json")) as fh:
+                self.assertEqual(json.load(fh), {"ok": 1})
+            del tries[:]
+            fy.os.replace = lambda tmp, path: (_ for _ in ()).throw(PermissionError(13, "locked"))
+            with self.assertRaises(PermissionError):         # truly locked: say so, do not hang
+                fy.replace_file("a", "b", tries=3, pause=0)
+        finally:
+            fy.os.replace = real
+        self.assertEqual([f for f in os.listdir(os.path.join("trader", "state")) if f.endswith(".tmp")], [])
+
+
 if __name__ == "__main__":
     unittest.main()

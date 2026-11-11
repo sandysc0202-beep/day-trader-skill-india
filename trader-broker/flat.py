@@ -10,7 +10,10 @@ own day or left open from an earlier day, is sold at that day's 15:00 price.
   the 15:00 price  the close of the 5-minute candle that ends at flat_by on the
                    day the position was opened (the 14:55 candle for 15:00);
                    when there is no such candle (the data ends earlier, or the
-                   day is too old), the last price
+                   day is too old), the last price. A feed that is only late
+                   (Yahoo runs about 15 minutes behind; FYERS adds a candle a
+                   few seconds after it closes) is waited for, up to 30 minutes
+                   past flat-by, so the price is 15:00's and not 14:45's
   the record       the sell in trader/portfolio.json, a fill in the log with
                    reason "flat" (the backtest's name for this exit), and a
                    "flat-exit" line, dated the day the position was opened so
@@ -37,6 +40,8 @@ import ticket       # noqa: E402  (next to this file)
 import fyers_api    # noqa: E402
 
 BAR = 300           # seconds in a 5-minute candle
+FRESH = 30 * 60     # candles this recent mean the data is still arriving (a delayed feed)
+PATIENCE = 30 * 60  # how long past flat-by to wait for a delayed feed's 15:00 candle
 EPOCH = datetime.datetime(1970, 1, 1)
 REASON = "flat"     # what trader-backtest calls an exit at flat-by
 
@@ -71,6 +76,18 @@ def price_at_flat(bars, day, hhmm):
     if best is not None and int(best["t"]) + BAR == end:
         return float(best["c"])
     return None
+
+
+def still_arriving(bars, now_utc, day, hhmm):
+    """True when the flat-by candle is missing only because the feed is behind: the newest
+    candle of that day is under 30 minutes old and it is under 30 minutes past flat-by."""
+    now = int((now_utc - EPOCH).total_seconds())
+    due = utc_ts(day, hhmm)
+    if now - due > PATIENCE:
+        return False
+    start = utc_ts(day, datetime.time(9, 15))
+    times = [int(b.get("t") or 0) for b in bars or [] if start <= int(b.get("t") or 0) < due]
+    return bool(times) and now - (max(times) + BAR) < FRESH
 
 
 def product_of(state, sym):
@@ -118,11 +135,14 @@ def check(cfg, now_utc, bars_for, price_for, paths=None, log=print):
         due = datetime.datetime.combine(day, hhmm)
         if now_ist < due:
             continue                                # still inside its day: nothing to do yet
-        price, how = None, "15:00 candle"
+        price, how, bars = None, "15:00 candle", None
         try:
-            price = price_at_flat(bars_for(sym, day), day, hhmm)
+            bars = bars_for(sym, day)
+            price = price_at_flat(bars, day, hhmm)
         except Exception as e:                      # no bars: fall back to the last price
             log("flat: %s: no %s candle (%s)" % (sym, hhmm.strftime("%H:%M"), e))
+        if price is None and still_arriving(bars, now_utc, day, hhmm):
+            continue                                # the feed is behind: its 15:00 candle is on the way
         if price is None:
             try:
                 price = price_for(sym)

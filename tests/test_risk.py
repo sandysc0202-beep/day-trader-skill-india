@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout, redirect_stderr
 
-from _load import load, ROOT, FIX
+from _load import load, FIX
 
 check = load("trader-risk", "check")
 ticket = load("trader-broker", "ticket")

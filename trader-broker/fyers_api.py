@@ -44,10 +44,12 @@ Education and tooling, not financial advice.
 import argparse
 import datetime
 import hashlib
+import http.client
 import json
 import os
 import re
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -128,15 +130,29 @@ def _read(path):
         return None
 
 
+def replace_file(tmp, path, tries=20, pause=0.05):
+    """os.replace that waits out Windows: there, swapping a file another program has open
+    for reading (the dashboard reading the log while a tool writes it) fails with
+    PermissionError for a moment. Mac and Linux never need the retry."""
+    for attempt in range(tries):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt + 1 == tries:
+                raise
+            time.sleep(pause)
+
+
 def _write(path, data):
     d = os.path.dirname(path)
     if d:
         os.makedirs(d, exist_ok=True)
-    tmp = path + ".tmp"
+    tmp = "%s.%d.tmp" % (path, os.getpid())      # one temp file per program: two writers never share it
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=2)
         fh.write("\n")
-    os.replace(tmp, path)
+    replace_file(tmp, path)
     try:
         os.chmod(path, 0o600)
     except OSError:
@@ -181,12 +197,36 @@ def fyers_only():
     return bool((_read(APP_CONFIG) or {}).get("fyers_only"))
 
 
+_local = threading.local()
+
+
+class forced_source:
+    """with forced_source("yahoo"): ... makes data_source() answer that in THIS thread only.
+    The dashboard uses it for its Yahoo backup. (Setting TRADER_DATA_SOURCE in os.environ
+    instead changes every thread, and two overlapping requests could leave it stuck.)"""
+
+    def __init__(self, source):
+        self.source = source
+
+    def __enter__(self):
+        self.before = getattr(_local, "source", None)
+        _local.source = self.source
+        return self
+
+    def __exit__(self, *exc):
+        _local.source = self.before
+        return False
+
+
 def data_source(now_utc=None):
     """'fyers' when FYERS is the data source, else 'yahoo'.
 
     TRADER_DATA_SOURCE=yahoo or =fyers decides; otherwise FYERS is used when today's
     token is saved (you logged in this morning), or always with "fyers_only" (and a
     missing login is then an error), Yahoo when neither."""
+    forced = getattr(_local, "source", None)
+    if forced in ("yahoo", "fyers"):
+        return forced
     want = (os.environ.get("TRADER_DATA_SOURCE") or "auto").lower()
     if want in ("yahoo", "fyers"):
         return want
@@ -324,7 +364,7 @@ def _pace():
             tmp = PACE_FILE + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump({"day": day, "count": count + 1, "plan": plan_name(), "calls": calls}, fh)
-            os.replace(tmp, PACE_FILE)
+            replace_file(tmp, PACE_FILE)
         finally:
             _unlock(lock)
 
@@ -351,8 +391,10 @@ def request(method, url, body=None, auth=None, data_call=False, timeout=20):
             e.close()
         if not text.strip().startswith("{"):
             raise FyersError("FYERS answered HTTP %d for %s" % (e.code, url.split("?")[0]))
-    except (urllib.error.URLError, OSError) as e:
-        raise FyersError("could not reach FYERS (%s)" % getattr(e, "reason", e))
+    except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
+        # http.client errors (a reply cut off half-way) are not OSErrors: without this an order
+        # call could crash with its yes still unused, and a second try could send it twice
+        raise FyersError("could not reach FYERS (%s)" % (getattr(e, "reason", None) or e or type(e).__name__))
     try:
         doc = json.loads(text)
     except ValueError:

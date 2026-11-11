@@ -474,5 +474,37 @@ class LivePlace(unittest.TestCase):
         self.assertIsNone(ticket.open_stop_id(self.state_doc(), "TSLA", TODAY))
 
 
+class LivePlaceNoAnswer(LivePlace):
+    """A live order whose answer never came: it may be at FYERS, so nothing is sent twice."""
+
+    def test_no_answer_uses_up_the_yes_and_says_to_check_fyers(self):
+        self.run_risk()
+        run(self.args("approve", "--index", "1", "--reply", "yes"))
+
+        def dropped(body):
+            self.sent.append(body)
+            raise ticket.fyers_api.FyersError("could not reach FYERS (IncompleteRead(1 bytes read))")
+        ticket.PLACE = dropped
+        code, text, _ = run(self.args("place", "--index", "1", "--portfolio", self.pf))
+        self.assertEqual(code, 1)
+        self.assertIn("MAY still have reached FYERS", text)
+        self.assertIn("fyers_api.py orders", text)
+        self.assertEqual(self.state_doc()["orders"][-1]["status"], "failed")
+        code, _, err = run(self.args("place", "--index", "1", "--portfolio", self.pf))
+        self.assertEqual((code, len(self.sent)), (1, 1))       # never a second copy of the order
+        self.assertIn("no unused yes", err)
+        code, _, err = run(self.args("approve", "--index", "1", "--reply", "yes"))
+        self.assertEqual(code, 1)                              # and no new yes for it today
+        self.assertFalse(os.path.exists(self.pf))              # nothing was recorded as bought
+
+    def test_a_placed_order_records_its_product(self):
+        self.run_risk()
+        run(self.args("approve", "--index", "1", "--reply", "yes"))
+        run(self.args("place", "--index", "1", "--portfolio", self.pf))
+        placed = [r for r in self.state_doc()["orders"] if r["status"] == "placed"][0]
+        self.assertEqual(placed["product"], "INTRADAY")
+        self.assertEqual([f for f in os.listdir(os.path.dirname(self.state)) if f.endswith(".tmp")], [])
+
+
 if __name__ == "__main__":
     unittest.main()

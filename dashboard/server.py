@@ -88,8 +88,9 @@ alerts_mod = load_module("trader-alerts", "alerts")
 sys.path.insert(0, os.path.join(ROOT, "trader-broker"))
 import trail as trail_mod  # noqa: E402  (trader-broker/trail.py: the trailing stop)
 import flat as flat_mod    # noqa: E402  (trader-broker/flat.py: paper trades closed at flat-by)
+import fyers_api as fyers  # noqa: E402  (the one copy the scanner, the tickets and the stops also use)
 scan_mod = load_module("trader-scanner", "scan")
-fyers = load_module("trader-broker", "fyers_api")
+bt_mod = load_module("trader-backtest", "backtest")     # its FYERS charge rates, for paper and live P&L
 
 
 def utcnow():
@@ -108,15 +109,42 @@ def write_json(path, data):
     d = os.path.dirname(path)
     if d:
         os.makedirs(d, exist_ok=True)
-    tmp = path + ".tmp"
+    tmp = "%s.%d.%d.tmp" % (path, os.getpid(), threading.get_ident())   # never shared by two writers
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=2)
         fh.write("\n")
-    os.replace(tmp, path)
+    fyers.replace_file(tmp, path)                # waits out Windows when a tool has the file open
 
 
 class ToolError(Exception):
     pass
+
+
+# ---------------------------------------------------------------- charges on a closed trade
+
+def order_brokerage(value, prime):
+    """FYERS' intraday brokerage on one order: Rs 20 or 0.03%, whichever is less (Rs 15 flat on Prime)."""
+    c = bt_mod.CHARGES
+    return c["brokerage_prime"] if prime else min(c["brokerage_cap"], c["brokerage_pct"] * value)
+
+
+def trade_charges(buy_value, sell_value, buy_brokerage, sell_brokerage):
+    """Charges on one closed intraday trade, with trader-backtest's rates and its shape.
+    For one buy closed by one sell this is exactly backtest.charges(). The brokerage comes
+    in separately because it is charged per ORDER: a buy closed by two sells pays its
+    brokerage once, shared between the two trades by shares."""
+    c = bt_mod.CHARGES
+    brokerage = buy_brokerage + sell_brokerage
+    turnover = buy_value + sell_value
+    stt = c["stt_sell"] * sell_value
+    exchange = c["exchange"] * turnover
+    sebi = c["sebi"] * turnover
+    ipft = c["ipft"] * turnover
+    stamp = c["stamp_buy"] * buy_value
+    gst = c["gst"] * (brokerage + exchange + sebi + ipft)
+    total = brokerage + stt + exchange + sebi + ipft + stamp + gst
+    return {"brokerage": round(brokerage, 2), "stt": round(stt, 2), "exchange": round(exchange, 2),
+            "sebi": round(sebi + ipft, 2), "stamp": round(stamp, 2), "gst": round(gst, 2), "total": round(total, 2)}
 
 
 # ---------------------------------------------------------------- the clock
@@ -248,6 +276,10 @@ class App:
         self.panels = {}                       # which source each panel's data came from last
         self.scan_job = None
         self.lock = threading.Lock()
+        # One writer at a time for trader/portfolio.json and the fill log: the background checks
+        # (flat-by, the trailing stop) and the ticket tools both read, change and rewrite them,
+        # and two doing that at once could drop a yes or a fill.
+        self.book_lock = threading.RLock()
         self._wall = None
         self._first_run()
         self.trail_log = []
@@ -260,7 +292,7 @@ class App:
         cfg = self.config()
         if not trail_mod.enabled(cfg):
             return {}
-        with self.lock:
+        with self.book_lock:
             return trail_mod.check(
                 cfg, self.clock.utc(),
                 bars_for=lambda s: [b for b in self.chart(s)["bars"]],
@@ -279,7 +311,7 @@ class App:
             if day == today or self.demo:
                 return self.chart(sym)["bars"]
             return self.chart(sym, rng="5d" if (today - day).days <= 4 else "1mo")["bars"]
-        with self.lock:
+        with self.book_lock:
             return flat_mod.check(
                 cfg, self.clock.utc(), bars_for, price_for=lambda s: self.chart(s)["price"],
                 log=lambda m: self.trail_log.append(m) or self.trail_log.__delitem__(slice(0, -50)))
@@ -506,15 +538,8 @@ class App:
 
     def yahoo_quotes(self, syms):
         """Yahoo's delayed quotes and sparklines, batches of 20 (the backup for FYERS)."""
-        env = os.environ.get("TRADER_DATA_SOURCE")
-        os.environ["TRADER_DATA_SOURCE"] = "yahoo"
-        try:
+        with fyers.forced_source("yahoo"):           # this thread only: nothing global to get stuck
             data, failed = scan_mod.fetch_spark(syms, "1d", "5m", 0.2)
-        finally:
-            if env is None:
-                os.environ.pop("TRADER_DATA_SOURCE", None)
-            else:
-                os.environ["TRADER_DATA_SOURCE"] = env
         out = {}
         for s, ser in data.items():
             closes = [c for c in ser["c"] if c is not None]
@@ -726,15 +751,39 @@ class App:
         return d if isinstance(d, list) else ([d] if d else [])
 
     def approve(self, index, reply):
+        with self.book_lock:
+            return self._approve(index, reply)
+
+    def decline(self, index):
+        with self.book_lock:
+            return self._decline(index)
+
+    def execute(self, index, confirm):
+        with self.book_lock:
+            return self._execute(index, confirm)
+
+    def protect(self, sym):
+        with self.book_lock:
+            return self._protect(sym)
+
+    def flatten(self, sym):
+        with self.book_lock:
+            return self._flatten(sym)
+
+    def cancel(self, broker_id):
+        with self.book_lock:
+            return self._cancel(broker_id)
+
+    def _approve(self, index, reply):
         r = self.run("ticket", ["approve", "--index", index, "--reply", reply] + self.now_args(), want_json=False)
         return {"ok": r["code"] == 0, "message": r["text"] or r["error"]}
 
-    def decline(self, index):
+    def _decline(self, index):
         r = self.run("ticket", ["decline", "--index", index, "--reply", "no (dashboard)"] + self.now_args(),
                      want_json=False)
         return {"ok": r["code"] == 0, "message": r["text"] or r["error"]}
 
-    def execute(self, index, confirm):
+    def _execute(self, index, confirm):
         tickets = self.tickets()
         t = next((x for x in tickets if int(x.get("index", 0)) == int(index)), None)
         if not t:
@@ -754,19 +803,19 @@ class App:
         r = self.run("ticket", ["place", "--index", index], want_json=False, timeout=60)
         return {"ok": r["code"] == 0, "message": r["text"] or r["error"], "paper": False}
 
-    def protect(self, sym):
+    def _protect(self, sym):
         r = self.run("ticket", ["protect", "--symbol", sym] + self.now_args(), want_json=False)
         if r["code"] != 0:
             raise ToolError(r["error"] or r["text"])
         return {"ok": True, "message": r["text"], "risk": self.risk(), "tickets": self.tickets()}
 
-    def flatten(self, sym):
+    def _flatten(self, sym):
         r = self.run("ticket", ["flatten", "--symbol", sym] + self.now_args(), want_json=False)
         if r["code"] != 0:
             raise ToolError(r["error"] or r["text"])
         return {"ok": True, "message": r["text"], "risk": self.risk(), "tickets": self.tickets()}
 
-    def cancel(self, broker_id):
+    def _cancel(self, broker_id):
         r = self.run("ticket", ["cancel", "--broker-id", broker_id], want_json=False)
         return {"ok": r["code"] == 0, "message": r["text"] or r["error"]}
 
@@ -844,7 +893,8 @@ class App:
                 syms.append(p.get("ticker"))
         q = self.quotes(syms) if syms else {}
         trails = trail_mod.load()
-        unreal = 0.0
+        prime = fyers.plan_name() == "prime"
+        unreal, open_net, open_charges = 0.0, 0.0, 0.0
         for p in positions:
             price = (q.get(p["symbol"]) or {}).get("price")
             p["price"] = price
@@ -852,6 +902,13 @@ class App:
                 p["pnl"] = round((price - p["avg"]) * p["shares"], 2)
                 p["pnl_pct"] = round(100 * (price / p["avg"] - 1), 2)
                 unreal += p["pnl"]
+                # what closing it now would cost: the buy's charges are already spent
+                buy_v, sell_v = p["cost"], price * p["shares"]
+                p["charges_est"] = trade_charges(buy_v, sell_v, order_brokerage(buy_v, prime),
+                                                 order_brokerage(sell_v, prime))["total"]
+                p["pnl_net"] = round(p["pnl"] - p["charges_est"], 2)
+                open_net += p["pnl_net"]
+                open_charges += p["charges_est"]
             if str(plan.get("symbol", "")).upper() == p["symbol"]:
                 p["stop"], p["target"], p["flat_by"] = plan.get("stop"), plan.get("target"), plan.get("flat_by")
             tr = trails.get(p["symbol"])
@@ -860,8 +917,9 @@ class App:
                               "moves": len(tr.get("moves", [])), "note": tr.get("note"),
                               "last": (tr.get("moves") or [{}])[-1].get("why")}
                 p["stop"] = tr["stop"]
-        trades = self.journal(state)
-        realized_today = round(sum(t["pnl"] for t in trades if t["date"] == today), 2)
+        trades = self.journal(state, prime)
+        realized_today = round(sum(t["pnl"] for t in trades if t["date"] == today), 2)      # after charges
+        charges_today = round(sum(t["charges"] or 0 for t in trades if t["date"] == today) + open_charges, 2)
         entries_today = [r for r in state.get("orders", []) if str(r.get("date")) == today
                          and r.get("status") in ("placed", "paper") and r.get("kind") == "entry"]
         held = {p["symbol"] for p in positions}
@@ -871,6 +929,8 @@ class App:
         stats = {"trades": len(trades), "wins": len(wins),
                  "win_rate": round(100.0 * len(wins) / len(trades), 1) if trades else None,
                  "net": round(sum(t["pnl"] for t in trades), 2),
+                 "gross": round(sum(t["gross"] for t in trades), 2),
+                 "charges": round(sum(t["charges"] or 0 for t in trades), 2),
                  "avg_r": round(sum(t["r"] for t in trades if t["r"] is not None) /
                                 max(1, len([t for t in trades if t["r"] is not None])), 2) if trades else None}
         eq, run_ = [], 0.0
@@ -883,17 +943,29 @@ class App:
                 broker_positions = fyers.positions()
             except fyers.FyersError as e:
                 broker_positions = {"error": str(e)}
-        return {"cash": pf.get("cash") if pf else cfg.get("budget"), "positions": positions,
+        cash = pf.get("cash") if pf else cfg.get("budget")
+        # trader/portfolio.json holds fills only. Paper has no broker taking its charges out, so the
+        # dashboard takes the closed trades' charges off the cash it shows (a live account's real
+        # cash is at FYERS).
+        cash_net = round(float(cash) - stats["charges"], 2) if cash is not None and cfg.get("paper", True) else cash
+        return {"cash": cash, "cash_after_charges": cash_net, "positions": positions,
                 "unrealized": round(unreal, 2), "realized_today": realized_today,
-                "day_pnl": round(unreal + realized_today, 2),
+                # after FYERS' charges, like the backtest: closed trades' actual round trips, and
+                # for open positions what closing them now would cost
+                "day_pnl": round(open_net + realized_today, 2),
+                "day_pnl_gross": round(unreal + sum(t["gross"] for t in trades if t["date"] == today), 2),
+                "charges_today": charges_today,
                 "limits": {"trades": len(entries_today), "max_trades": cfg.get("max_trades_per_day"),
                            "at_risk": at_risk, "max_daily_loss": cfg.get("max_daily_loss_inr"),
                            "loss_today": round(max(0.0, -realized_today), 2)},
                 "log": log[-30:], "journal": trades[-50:], "stats": stats, "equity": eq,
                 "broker_positions": broker_positions}
 
-    def journal(self, state):
-        """Round trips from the fill log, oldest lots first: buy, then the sells that close it."""
+    def journal(self, state, prime=False):
+        """Round trips from the fill log, oldest lots first: buy, then the sells that close it.
+        "pnl" is after FYERS' intraday charges (trader-backtest's rates), "gross" before them,
+        and "r" is the net R, as the backtest reports it. A trade closed on a later day than it
+        was opened is delivery, which is charged differently: its charges are not estimated."""
         lots = collections.defaultdict(list)
         risk_by = {}
         trades = []
@@ -906,15 +978,17 @@ class App:
             reason = r.get("reason")
             day = str(r.get("date") or str(r.get("at", ""))[:10])
             if r.get("side") == "buy":
-                lots[sym].append([qty, price, day, r.get("at")])
+                # [shares left, price, day, time, shares bought, the buy order's brokerage]
+                lots[sym].append([qty, price, day, r.get("at"), qty, order_brokerage(qty * price, prime)])
                 continue
-            left, pnl, cost = qty, 0.0, 0.0
+            left, pnl, cost, buy_brok = qty, 0.0, 0.0, 0.0
             opened = None
             while left > 1e-9 and lots[sym]:
                 lot = lots[sym][0]
                 take = min(left, lot[0])
                 pnl += take * (price - lot[1])
                 cost += take * lot[1]
+                buy_brok += lot[5] * take / lot[4] if lot[4] else 0.0
                 opened = opened or lot
                 lot[0] -= take
                 left -= take
@@ -922,10 +996,18 @@ class App:
                     lots[sym].pop(0)
             if opened:
                 risk = risk_by.get((sym, opened[2]))
+                closed = qty - left
+                ch = None
+                if opened[2] == day:                       # bought and sold the same day: intraday
+                    ch = trade_charges(cost, closed * price, buy_brok,
+                                       order_brokerage(qty * price, prime) * closed / qty if qty else 0.0)
+                net = pnl - (ch["total"] if ch else 0.0)
                 trades.append({"symbol": sym, "date": day, "qty": qty, "entry": round(cost / max(qty, 1e-9), 2),
-                               "exit": price, "pnl": round(pnl, 2), "opened": opened[3], "closed": r.get("at"),
-                               "reason": reason,
-                               "r": round(pnl / risk, 2) if risk else None})
+                               "exit": price, "pnl": round(net, 2), "gross": round(pnl, 2),
+                               "charges": ch["total"] if ch else None, "charge_parts": ch,
+                               "opened": opened[3], "closed": r.get("at"), "reason": reason,
+                               "r": round(net / risk, 2) if risk else None,
+                               "r_gross": round(pnl / risk, 2) if risk else None})
         return trades
 
     # ------------------------------------------------ FYERS setup
@@ -1142,14 +1224,15 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/demo/reset":
                 if not app.demo:
                     return self._send(400, {"error": "demo only"})
-                for f in ("watchlist.json", "entry.json", "plan.json", "timemachine.json", "orders.json",
-                          "portfolio.json", "prices.json"):
-                    p = os.path.join("trader", f)
-                    if os.path.exists(p):
-                        os.remove(p)
-                shutil.rmtree(os.path.join("trader", "state"), ignore_errors=True)
-                os.makedirs(os.path.join("trader", "state"), exist_ok=True)
-                app.clock.set("09:50", playing=False)
+                with app.book_lock:                  # not while a background check is writing them
+                    for f in ("watchlist.json", "entry.json", "plan.json", "timemachine.json", "orders.json",
+                              "portfolio.json", "prices.json"):
+                        p = os.path.join("trader", f)
+                        if os.path.exists(p):
+                            os.remove(p)
+                    shutil.rmtree(os.path.join("trader", "state"), ignore_errors=True)
+                    os.makedirs(os.path.join("trader", "state"), exist_ok=True)
+                    app.clock.set("09:50", playing=False)
                 return self._send(200, app.status())
             return self._send(404, {"error": "not found"})
         except (ToolError, fyers.FyersError, scan_mod.ScanError) as e:

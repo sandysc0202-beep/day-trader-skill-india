@@ -26,7 +26,7 @@ Then open http://127.0.0.1:8765 (it opens by itself unless `--no-browser`).
 | 05 Size, Risk, Order | shares and what bound them, PASS or BLOCK with every reason, the ticket, your yes, the fill | `size.py`, `check.py`, `ticket.py` |
 | 06 Positions & Limits | open positions with live P&L and where the price sits between stop and target, trades used today, open risk plus today's losses against your daily limit, today's log | `trader/portfolio.json`, `trader/state/broker.json`; FYERS positions when live |
 | 07 News & NSE filings | the six newest stories for your favourites, today's movers; **OPEN NEWS** shows them all laid out like Zerodha Pulse: one card per story with its summary, other outlets' versions of the same story grouped under it, "2 hours ago, source", and trending words and symbols to filter by. FYERS' API has no news feed, so headlines come from Yahoo Finance and NSE filings | `news.py` |
-| 08 Journal | every closed trade with P&L and R, win rate, net, the equity curve | the fill log |
+| 08 Journal | every closed trade with its P&L and R after FYERS' charges (the charges on their own line), win rate, net after charges, the equity curve | the fill log, trader-backtest's charge rates |
 | RESULTS | the quarterly numbers for the symbol on screen | `facts.py` |
 
 **BACKTEST** replays the strategy over past sessions for your favourites (or
@@ -65,12 +65,24 @@ stop. Live: your STOP-LOSS order at FYERS is moved up and FYERS sells. It
 runs while the dashboard runs. The BACKTEST window has a "with trailing stop"
 box to compare.
 
+**P&L is after charges.** The Day P&L, the Journal and "lost today" in the
+Limits panel take off FYERS' intraday charges with the same rates as the
+backtest: brokerage (Rs 20 or 0.03% an order, Rs 15 on Prime), STT, exchange
+and SEBI fees, stamp duty and GST. A closed trade shows its charges under its
+net P&L; an open position counts what closing it now would cost. Hover a
+figure for the amount before charges. They are estimates: a live account's
+real charges are on FYERS' contract note. A trade held overnight (delivery)
+is charged differently and is left before charges. The risk check's own
+daily-loss rule is unchanged: it adds up each entry's maximum loss at its
+stop, not realised P&L.
+
 **Paper trades close themselves at flat-by.** Any paper position still open
 at 15:00 (your `flat_by`) is sold at the 15:00 price: the close of the
 5-minute candle that ends at 15:00, or the last price if there is none. It
 happens even if the dashboard was closed at 15:00: the next time it starts,
 anything left open from an earlier day is closed at that day's price and
-counted on that day. The journal marks these "flat 15:00". Live positions are
+counted on that day. When the feed is only late (Yahoo runs about 15 minutes
+behind), it waits up to 30 minutes for the real 15:00 candle. The journal marks these "flat 15:00". Live positions are
 left to FYERS, which squares off INTRADAY from 3:05 PM; CNC is never closed.
 In the demo, the **15:05** button on the replay bar jumps past flat-by.
 
